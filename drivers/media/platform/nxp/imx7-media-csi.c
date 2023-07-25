@@ -1076,6 +1076,7 @@ static int imx7_csi_video_enum_framesizes(struct file *file, void *fh,
 					  struct v4l2_frmsizeenum *fsize)
 {
 	const struct imx7_csi_pixfmt *cc;
+	u32 walign;
 
 	if (fsize->index > 0)
 		return -EINVAL;
@@ -1085,16 +1086,17 @@ static int imx7_csi_video_enum_framesizes(struct file *file, void *fh,
 		return -EINVAL;
 
 	/*
-	 * TODO: The constraints are hardware-specific and may depend on the
-	 * pixel format. This should come from the driver using
-	 * imx_media_capture.
+	 * The width alignment is 8 bytes as indicated by the
+	 * CSI_IMAG_PARA.IMAGE_WIDTH documentation. Convert it to pixels.
 	 */
+	walign = 8 * 8 / cc->bpp;
+
 	fsize->type = V4L2_FRMSIZE_TYPE_CONTINUOUS;
-	fsize->stepwise.min_width = 1;
-	fsize->stepwise.max_width = 65535;
+	fsize->stepwise.min_width = walign;
+	fsize->stepwise.max_width = round_down(65535U, walign);
 	fsize->stepwise.min_height = 1;
 	fsize->stepwise.max_height = 65535;
-	fsize->stepwise.step_width = 1;
+	fsize->stepwise.step_width = walign;
 	fsize->stepwise.step_height = 1;
 
 	return 0;
