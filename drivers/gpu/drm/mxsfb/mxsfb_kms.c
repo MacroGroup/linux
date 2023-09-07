@@ -70,8 +70,9 @@ static void mxsfb_set_formats(struct mxsfb_drm_private *mxsfb,
 		ctrl |= CTRL_WORD_LENGTH_16;
 		ctrl1 |= CTRL1_SET_BYTE_PACKAGING(0xf);
 		break;
+	case DRM_FORMAT_ARGB8888:
 	case DRM_FORMAT_XRGB8888:
-		dev_dbg(drm->dev, "Setting up XRGB8888 mode\n");
+		dev_dbg(drm->dev, "Setting up xRGB8888 mode\n");
 		ctrl |= CTRL_WORD_LENGTH_24;
 		/* Do not use packed pixels = one pixel per word instead. */
 		ctrl1 |= CTRL1_SET_BYTE_PACKAGING(0x7);
@@ -641,6 +642,7 @@ static const struct drm_plane_funcs mxsfb_plane_funcs = {
 static const uint32_t mxsfb_primary_plane_formats[] = {
 	DRM_FORMAT_RGB565,
 	DRM_FORMAT_XRGB8888,
+	DRM_FORMAT_ARGB8888,
 };
 
 static const uint32_t mxsfb_overlay_plane_formats[] = {
