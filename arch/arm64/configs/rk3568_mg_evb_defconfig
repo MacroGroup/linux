@@ -580,6 +580,7 @@ CONFIG_NLS_CODEPAGE_866=y
 CONFIG_NLS_CODEPAGE_1251=y
 CONFIG_NLS_UTF8=y
 CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,selinux,smack,tomoyo,apparmor,bpf"
+CONFIG_CRYPTO_NULL=y
 CONFIG_CRYPTO_DEFLATE=y
 CONFIG_CRYPTO_JITTERENTROPY=y
 # CONFIG_CRYPTO_HW is not set
