@@ -422,15 +422,15 @@ static const struct diasom_panel_desc rfh1010j_desc = {
                .hdisplay       = 1024,
                .hsync_start    = 1024 + 160,
                .hsync_end      = 1024 + 160 + 70,
-               .htotal         = 1024 + 160 + 70,
+               .htotal         = 1024 + 160 + 160 + 70,
 
                .vdisplay       = 600,
                .vsync_start    = 600 + 12,
                .vsync_end      = 600 + 12 + 20,
                .vtotal         = 600 + 12 + 20 + 23,
 
-               .width_mm       = 222,
-               .height_mm      = 125,
+               .width_mm       = 125,
+               .height_mm      = 222,
                .type           = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED,
        },
        .lanes = 4,
