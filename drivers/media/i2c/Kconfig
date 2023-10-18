@@ -818,6 +818,16 @@ config VIDEO_ST_VGXY61
 	  This is a Video4Linux2 sensor driver for the ST VGXY61
 	  camera sensor.
 
+config VIDEO_XC7160
+	tristate "Firefly XC7160 support"
+	depends on OF && GPIOLIB && VIDEO_DEV && I2C
+	select MEDIA_CONTROLLER
+	select VIDEO_V4L2_SUBDEV_API
+	select V4L2_FWNODE
+	help
+	  Driver for sv-taysh camera.
+	  This camera consists of ISP xc7160 and sensor sc8238.
+
 source "drivers/media/i2c/ccs/Kconfig"
 source "drivers/media/i2c/et8ek8/Kconfig"
 

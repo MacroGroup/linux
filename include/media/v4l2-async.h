@@ -239,6 +239,13 @@ int v4l2_async_nf_register(struct v4l2_device *v4l2_dev,
 			   struct v4l2_async_notifier *notifier);
 
 /**
+* v4l2_async_notifier_clr_unready_dev - remove unready subdevice
+*
+* @notifier: pointer to &struct v4l2_async_notifier
+*/
+int v4l2_async_notifier_clr_unready_dev(struct v4l2_async_notifier *notifier);
+
+/**
  * v4l2_async_subdev_nf_register - registers a subdevice asynchronous
  *					 notifier for a sub-device
  *

@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: GPL-2.0
+config VIDEO_ROCKCHIP_ISP
+	tristate "Rockchip Image Signal Processing Unit driver"
+	depends on V4L_PLATFORM_DRIVERS
+	depends on VIDEO_DEV
+	depends on ARCH_ROCKCHIP || COMPILE_TEST
+	select VIDEO_V4L2_SUBDEV_API
+	select VIDEOBUF2_CMA_SG
+	select VIDEOBUF2_VMALLOC
+	select V4L2_FWNODE
+	help
+	  Support for ISP on the rockchip SoC.
+
+if VIDEO_ROCKCHIP_ISP
+
+config VIDEO_ROCKCHIP_ISP_VERSION_V21
+	bool "isp21 for rk3566 and rk3568"
+
+# The modules above is not tested even by compile, so lets keep
+# it in the tree, but disable for select
+#
+#config VIDEO_ROCKCHIP_ISP_VERSION_V1X
+#	bool "isp1 for rk1808 rk3288 rk3326 rk3368 rk3399"
+#
+#config VIDEO_ROCKCHIP_ISP_VERSION_V20
+#	bool "isp20 for rv1126 and rv1109"
+#
+#config VIDEO_ROCKCHIP_ISP_VERSION_V30
+#	bool "isp30 for rk3588"
+#
+#config VIDEO_ROCKCHIP_ISP_VERSION_V32
+#	bool "isp32 for rv1106 rk3562"
+
+endif
