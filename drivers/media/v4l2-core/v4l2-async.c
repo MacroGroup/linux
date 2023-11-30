@@ -850,6 +850,31 @@ void v4l2_async_unregister_subdev(struct v4l2_subdev *sd)
 }
 EXPORT_SYMBOL(v4l2_async_unregister_subdev);
 
+static void print_waiting_subdev(struct seq_file *s,
+				 struct v4l2_async_subdev *asd)
+{
+	switch (asd->match_type) {
+	case V4L2_ASYNC_MATCH_I2C:
+		seq_printf(s, " [i2c] dev=%d-%04x\n", asd->match.i2c.adapter_id,
+			   asd->match.i2c.address);
+		break;
+	case V4L2_ASYNC_MATCH_FWNODE: {
+		struct fwnode_handle *devnode, *fwnode = asd->match.fwnode;
+
+		devnode = fwnode_graph_is_endpoint(fwnode) ?
+			  fwnode_graph_get_port_parent(fwnode) :
+			  fwnode_handle_get(fwnode);
+
+		seq_printf(s, " [fwnode] dev=%s, node=%pfw\n",
+			   devnode->dev ? dev_name(devnode->dev) : "nil",
+			   fwnode);
+
+		fwnode_handle_put(devnode);
+		break;
+	}
+	}
+}
+
 static int __v4l2_async_notifier_clr_unready_dev(
 	struct v4l2_async_notifier *notifier)
 {
@@ -901,31 +926,6 @@ int v4l2_async_notifier_clr_unready_dev(struct v4l2_async_notifier *notifier)
 	return ret;
 }
 EXPORT_SYMBOL(v4l2_async_notifier_clr_unready_dev);
-
-static void print_waiting_subdev(struct seq_file *s,
-				 struct v4l2_async_subdev *asd)
-{
-	switch (asd->match_type) {
-	case V4L2_ASYNC_MATCH_I2C:
-		seq_printf(s, " [i2c] dev=%d-%04x\n", asd->match.i2c.adapter_id,
-			   asd->match.i2c.address);
-		break;
-	case V4L2_ASYNC_MATCH_FWNODE: {
-		struct fwnode_handle *devnode, *fwnode = asd->match.fwnode;
-
-		devnode = fwnode_graph_is_endpoint(fwnode) ?
-			  fwnode_graph_get_port_parent(fwnode) :
-			  fwnode_handle_get(fwnode);
-
-		seq_printf(s, " [fwnode] dev=%s, node=%pfw\n",
-			   devnode->dev ? dev_name(devnode->dev) : "nil",
-			   fwnode);
-
-		fwnode_handle_put(devnode);
-		break;
-	}
-	}
-}
 
 static const char *
 v4l2_async_nf_name(struct v4l2_async_notifier *notifier)
