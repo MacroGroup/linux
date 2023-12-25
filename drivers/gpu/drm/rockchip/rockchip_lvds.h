@@ -120,4 +120,14 @@
 #define   PX30_LVDS_P2S_EN(val)			HIWORD_UPDATE(val,  6,  6)
 #define   PX30_LVDS_VOP_SEL(val)		HIWORD_UPDATE(val,  1,  1)
 
+#define RK3568_GRF_VO_CON0			0x0360
+#define   RK3568_LVDS0_SELECT(val)		HIWORD_UPDATE(val,  5,  4)
+#define   RK3568_LVDS0_MSBSEL(val)		HIWORD_UPDATE(val,  3,  3)
+
+#define RK3568_GRF_VO_CON2			0x0368
+#define   RK3568_LVDS0_DCLK_INV_SEL(val)	HIWORD_UPDATE(val,  9,  9)
+#define   RK3568_LVDS0_DCLK_DIV2_SEL(val)	HIWORD_UPDATE(val,  8,  8)
+#define   RK3568_LVDS0_MODE_EN(val)		HIWORD_UPDATE(val,  1,  1)
+#define   RK3568_LVDS0_P2S_EN(val)		HIWORD_UPDATE(val,  0,  0)
+
 #endif /* _ROCKCHIP_LVDS_ */
