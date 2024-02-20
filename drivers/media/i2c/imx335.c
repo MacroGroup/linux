@@ -959,6 +959,16 @@ done_endpoint_free:
 	return ret;
 }
 
+static int imx335_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
+				struct v4l2_mbus_config *config)
+{
+	config->type = V4L2_MBUS_CSI2_DPHY;
+	config->bus.mipi_csi2.flags = 0;
+	config->bus.mipi_csi2.num_data_lanes = IMX335_NUM_DATA_LANES;//imx335->lane_data_num;
+	
+	return 0;
+}
+
 /* V4l2 subdevice ops */
 static const struct v4l2_subdev_video_ops imx335_video_ops = {
 	.s_stream = imx335_set_stream,
@@ -972,6 +982,7 @@ static const struct v4l2_subdev_pad_ops imx335_pad_ops = {
 	.set_selection = imx335_get_selection,
 	.get_fmt = imx335_get_pad_format,
 	.set_fmt = imx335_set_pad_format,
+	.get_mbus_config = imx335_g_mbus_config,
 };
 
 static const struct v4l2_subdev_ops imx335_subdev_ops = {
