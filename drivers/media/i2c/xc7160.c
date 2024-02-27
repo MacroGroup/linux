@@ -115,7 +115,6 @@ struct xc7160 {
 	struct v4l2_ctrl	*hblank;
 	struct v4l2_ctrl	*vblank;
 	struct mutex		mutex;
-	bool			streaming;
 	bool			power_on;
 	bool			isp_out_colorbar;	//Mark whether the color bar should be output 
 	bool			initial_status;		//Whether the isp has been initialized 
@@ -941,9 +940,6 @@ static int xc7160_s_stream(struct v4l2_subdev *sd, int on)
 	int ret = 0;
 
 	mutex_lock(&xc7160->mutex);
-	on = !!on;
-	if (on == xc7160->streaming)
-		goto unlock_and_return;
 
 	if (on) {
 		ret = pm_runtime_get_sync(&client->dev);
@@ -956,14 +952,11 @@ static int xc7160_s_stream(struct v4l2_subdev *sd, int on)
 		if (ret) {
 			v4l2_err(sd, "start stream failed while write regs\n");
 			pm_runtime_put(&client->dev);
-			goto unlock_and_return;
 		}
 	} else {
 		__xc7160_stop_stream(xc7160);
 		pm_runtime_put(&client->dev);
 	}
-
-	xc7160->streaming = on;
 
 unlock_and_return:
 	mutex_unlock(&xc7160->mutex);
