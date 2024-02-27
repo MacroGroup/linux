@@ -922,7 +922,7 @@ static int __v4l2_async_notifier_clr_unready_dev(
 	struct v4l2_subdev *sd, *tmp;
 	int clr_num = 0;
 
-	list_for_each_entry_safe(sd, tmp, &notifier->done, async_list) {
+	list_for_each_entry_safe(sd, tmp, &notifier->done_list, async_list) {
 		struct v4l2_async_notifier *subdev_notifier =
 		v4l2_async_find_subdev_notifier(sd);
 
@@ -931,9 +931,9 @@ static int __v4l2_async_notifier_clr_unready_dev(
 				subdev_notifier);
 	}
 
-	list_for_each_entry_safe(sd, tmp, &notifier->waiting, async_list) {
+	list_for_each_entry_safe(sd, tmp, &notifier->waiting_list, async_list) {
 		list_del_init(&sd->async_list);
-		sd->asd = NULL;
+		list_del_init(&sd->asc_list);
 		sd->dev = NULL;
 		clr_num++;
 	}

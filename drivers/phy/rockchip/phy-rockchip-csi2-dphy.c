@@ -26,7 +26,7 @@
 #include "phy-rockchip-samsung-dcphy.h"
 
 struct sensor_async_subdev {
-	struct v4l2_async_subdev asd;
+	struct v4l2_async_connection asd;
 	struct v4l2_mbus_config mbus;
 	int lanes;
 };
@@ -401,7 +401,7 @@ static const struct v4l2_subdev_ops csi2_dphy_subdev_ops = {
 static int
 rockchip_csi2_dphy_notifier_bound(struct v4l2_async_notifier *notifier,
 					   struct v4l2_subdev *sd,
-					   struct v4l2_async_subdev *asd)
+					   struct v4l2_async_connection *asd)
 {
 	struct csi2_dphy *dphy = container_of(notifier,
 					      struct csi2_dphy,
@@ -452,7 +452,7 @@ rockchip_csi2_dphy_notifier_bound(struct v4l2_async_notifier *notifier,
 static void
 rockchip_csi2_dphy_notifier_unbind(struct v4l2_async_notifier *notifier,
 				  struct v4l2_subdev *sd,
-				  struct v4l2_async_subdev *asd)
+				  struct v4l2_async_connection *asd)
 {
 	struct csi2_dphy *dphy = container_of(notifier,
 						  struct csi2_dphy,
@@ -469,33 +469,16 @@ v4l2_async_notifier_operations rockchip_csi2_dphy_async_ops = {
 	.unbind = rockchip_csi2_dphy_notifier_unbind,
 };
 
-static int rockchip_csi2_dphy_fwnode_parse(struct device *dev,
-					  struct v4l2_fwnode_endpoint *vep,
-					  struct v4l2_async_subdev *asd)
-{
-	struct sensor_async_subdev *s_asd =
-			container_of(asd, struct sensor_async_subdev, asd);
-	struct v4l2_mbus_config *config = &s_asd->mbus;
-
-	if (vep->bus_type == V4L2_MBUS_CSI2_DPHY ||
-	    vep->bus_type == V4L2_MBUS_CSI2_CPHY) {
-		config->type = V4L2_MBUS_CSI2_DPHY;
-		config->bus.mipi_csi2.flags = vep->bus.mipi_csi2.flags;
-		s_asd->lanes = vep->bus.mipi_csi2.num_data_lanes;
-	} else if (vep->bus_type == V4L2_MBUS_CCP2) {
-		config->type = V4L2_MBUS_CCP2;
-		s_asd->lanes = vep->bus.mipi_csi1.data_lane;
-	} else {
-		dev_err(dev, "Only CSI2 type is currently supported\n");
-		return -EINVAL;
-	}
-
-	return 0;
-}
-
 static int rockchip_csi2dphy_media_init(struct csi2_dphy *dphy)
 {
 	int ret;
+	struct fwnode_handle *ep, *fwnode;
+	struct v4l2_async_connection *asd;
+	struct sensor_async_subdev *s_asd;
+	struct v4l2_mbus_config *config;
+	struct v4l2_fwnode_endpoint v4l2_ep = {
+		.bus_type = V4L2_MBUS_UNKNOWN,
+	};
 
 	dphy->pads[CSI2_DPHY_RX_PAD_SOURCE].flags =
 		MEDIA_PAD_FL_SOURCE | MEDIA_PAD_FL_MUST_CONNECT;
@@ -507,18 +490,56 @@ static int rockchip_csi2dphy_media_init(struct csi2_dphy *dphy)
 	if (ret < 0)
 		return ret;
 
-	v4l2_async_nf_init(&dphy->notifier);
+	v4l2_async_subdev_nf_init(&dphy->notifier, &dphy->sd);
 
-	ret = v4l2_async_nf_parse_fwnode_endpoints(
-		dphy->dev, &dphy->notifier,
-		sizeof(struct sensor_async_subdev),
-		rockchip_csi2_dphy_fwnode_parse);
-	if (ret < 0)
-		return ret;
+	ep = fwnode_graph_get_endpoint_by_id(dev_fwnode(dphy->dev), 0, 0,
+					     FWNODE_GRAPH_ENDPOINT_NEXT);
+	if (!ep) {
+		dev_err(dphy->dev, "Not connected to subdevice\n");
+		return -EINVAL;
+	}
+
+	ret = v4l2_fwnode_endpoint_parse(ep, &v4l2_ep);
+	if (ret) {
+		dev_err(dphy->dev, "Could not parse v4l2 endpoint\n");
+		fwnode_handle_put(ep);
+		return -EINVAL;
+	}
+
+	if (v4l2_ep.bus_type != V4L2_MBUS_CSI2_DPHY &&
+	    v4l2_ep.bus_type != V4L2_MBUS_CSI2_CPHY &&
+	    v4l2_ep.bus_type != V4L2_MBUS_CCP2) {
+		dev_err(dphy->dev, "Bus type %d is not supported\n", v4l2_ep.bus_type);
+		fwnode_handle_put(ep);
+		return -EINVAL;
+	}
+
+	fwnode = fwnode_graph_get_remote_endpoint(ep);
+	fwnode_handle_put(ep);
+
+	dphy->notifier.ops = &rockchip_csi2_dphy_async_ops;
+
+	asd = v4l2_async_nf_add_fwnode(&dphy->notifier, fwnode,
+				       struct v4l2_async_connection);
+	fwnode_handle_put(fwnode);
+	if (IS_ERR(asd))
+		return PTR_ERR(asd);
+
+	s_asd = container_of(asd, struct sensor_async_subdev, asd);
+	config = &s_asd->mbus;
+	if (v4l2_ep.bus_type == V4L2_MBUS_CSI2_DPHY ||
+	    v4l2_ep.bus_type == V4L2_MBUS_CSI2_CPHY) {
+		config->type = V4L2_MBUS_CSI2_DPHY;
+		config->bus.mipi_csi2.flags = v4l2_ep.bus.mipi_csi2.flags;
+		s_asd->lanes = v4l2_ep.bus.mipi_csi2.num_data_lanes;
+	} else { /* v4l2_ep.bus_type == V4L2_MBUS_CCP2 */
+		config->type = V4L2_MBUS_CCP2;
+		s_asd->lanes = v4l2_ep.bus.mipi_csi1.data_lane;
+	}
 
 	dphy->sd.subdev_notifier = &dphy->notifier;
-	dphy->notifier.ops = &rockchip_csi2_dphy_async_ops;
-	ret = v4l2_async_subdev_nf_register(&dphy->sd, &dphy->notifier);
+
+	ret = v4l2_async_nf_register(&dphy->notifier);
 	if (ret) {
 		dev_err(dphy->dev,
 			"failed to register async notifier : %d\n", ret);
