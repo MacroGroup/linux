@@ -45,12 +45,14 @@
 /* Group hold register */
 #define IMX335_REG_HOLD		0x3001
 
+/* Number of output lanes */
+#define IMX335_REG_LANEMODE	0x3a01
+
 /* Input clock rate */
 #define IMX335_INCLK_RATE	24000000
 
 /* CSI2 HW configuration */
 #define IMX335_LINK_FREQ	594000000
-#define IMX335_NUM_DATA_LANES	4
 
 #define IMX335_REG_MIN		0x00
 #define IMX335_REG_MAX		0xfffff
@@ -110,7 +112,6 @@ struct imx335_mode {
 	u32 vblank;
 	u32 vblank_min;
 	u32 vblank_max;
-	u64 pclk;
 	u32 link_freq_idx;
 	struct imx335_reg_list reg_list;
 };
@@ -158,6 +159,7 @@ struct imx335 {
 	const struct imx335_mode *cur_mode;
 	struct mutex mutex;
 	u32 cur_mbus_code;
+	u32 num_data_lanes;
 };
 
 static const s64 link_freq[] = {
@@ -279,7 +281,6 @@ static const struct imx335_mode supported_mode = {
 	.vblank = 2560,
 	.vblank_min = 2560,
 	.vblank_max = 133060,
-	.pclk = 396000000,
 	.link_freq_idx = 0,
 	.reg_list = {
 		.num_of_regs = ARRAY_SIZE(mode_2592x1940_regs),
@@ -764,6 +765,14 @@ static int imx335_start_streaming(struct imx335 *imx335)
 		return ret;
 	}
 
+	/* Setup number of output lanes */
+	ret = imx335_write_reg(imx335, IMX335_REG_LANEMODE,
+			       1, imx335->num_data_lanes - 1);
+	if (ret) {
+		dev_err(imx335->dev, "fail to setup lane count\n");
+		return ret;
+	}
+
 	ret = imx335_set_framefmt(imx335);
 	if (ret) {
 		dev_err(imx335->dev, "%s failed to set frame format: %d\n",
@@ -931,10 +940,11 @@ static int imx335_parse_hw_config(struct imx335 *imx335)
 	if (ret)
 		return ret;
 
-	if (bus_cfg.bus.mipi_csi2.num_data_lanes != IMX335_NUM_DATA_LANES) {
+	imx335->num_data_lanes = bus_cfg.bus.mipi_csi2.num_data_lanes;
+	if ((imx335->num_data_lanes != 2) && (imx335->num_data_lanes != 4)) {
 		dev_err(imx335->dev,
 			"number of CSI2 data lanes %d is not supported\n",
-			bus_cfg.bus.mipi_csi2.num_data_lanes);
+			imx335->num_data_lanes);
 		ret = -EINVAL;
 		goto done_endpoint_free;
 	}
@@ -962,10 +972,12 @@ done_endpoint_free:
 static int imx335_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
 				struct v4l2_mbus_config *config)
 {
+	struct imx335 *imx335 = to_imx335(sd);
+
 	config->type = V4L2_MBUS_CSI2_DPHY;
 	config->bus.mipi_csi2.flags = 0;
-	config->bus.mipi_csi2.num_data_lanes = IMX335_NUM_DATA_LANES;//imx335->lane_data_num;
-	
+	config->bus.mipi_csi2.num_data_lanes = imx335->num_data_lanes;
+
 	return 0;
 }
 
@@ -1061,6 +1073,7 @@ static int imx335_init_controls(struct imx335 *imx335)
 	struct v4l2_ctrl_handler *ctrl_hdlr = &imx335->ctrl_handler;
 	const struct imx335_mode *mode = imx335->cur_mode;
 	u32 lpfr;
+	u64 pclk;
 	int ret;
 
 	ret = v4l2_ctrl_handler_init(ctrl_hdlr, 6);
@@ -1098,11 +1111,13 @@ static int imx335_init_controls(struct imx335 *imx335)
 						1, mode->vblank);
 
 	/* Read only controls */
+
+	/* pixel rate = link frequency * 2 * lanes / BITS_PER_SAMPLE */
+	pclk = link_freq[mode->link_freq_idx] * 2 * imx335->num_data_lanes / 10;
 	imx335->pclk_ctrl = v4l2_ctrl_new_std(ctrl_hdlr,
 					      &imx335_ctrl_ops,
 					      V4L2_CID_PIXEL_RATE,
-					      mode->pclk, mode->pclk,
-					      1, mode->pclk);
+					      pclk, pclk, 1, pclk);
 
 	imx335->link_freq_ctrl = v4l2_ctrl_new_int_menu(ctrl_hdlr,
 							&imx335_ctrl_ops,
