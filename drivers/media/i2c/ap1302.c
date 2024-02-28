@@ -3010,7 +3010,7 @@ static ssize_t stall_standby_store(struct device *dev,
 	struct v4l2_subdev *sd = i2c_get_clientdata(to_i2c_client(dev));
 	struct ap1302_device *ap1302 = to_ap1302(sd);
 
-	if (strtobool(buf, &ap1302->stall_standby) < 0)
+	if (kstrtobool(buf, &ap1302->stall_standby) < 0)
 		return -EINVAL;
 
 	return size;
