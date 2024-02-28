@@ -2470,7 +2470,7 @@ static int ap1302_s_stream(struct v4l2_subdev *sd, int enable)
 
 	if (enable) {
 		ret = ap1302_configure(ap1302);
-		if (!ret < 0)
+		if (!ret)
 			ret = ap1302_stall(ap1302, false);
 	} else
 		ret = ap1302_stall(ap1302, true);
