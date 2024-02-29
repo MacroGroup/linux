@@ -274,7 +274,7 @@ queue_init(void *priv, struct vb2_queue *src_vq, struct vb2_queue *dst_vq)
 	 * The Kernel needs access to the JPEG destination buffer for the
 	 * JPEG encoder to fill in the JPEG headers.
 	 */
-	/* if (!ctx->is_encoder) */ // This was under condition in mainline, but not in downstream h264 support
+	if (!ctx->is_encoder)  // This was under condition in mainline, but not in downstream h264 support
 		dst_vq->dma_attrs |= DMA_ATTR_NO_KERNEL_MAPPING;
 
 	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;

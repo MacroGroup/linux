@@ -640,6 +640,13 @@ static const struct hantro_codec_ops rk3568_vepu_codec_ops[] = {
 		.reset = rockchip_vpu2_enc_reset,
 		.done = rockchip_vpu2_jpeg_enc_done,
 	},
+	[HANTRO_MODE_H264_ENC] = {
+		.done = rk3399_vpu_h264_enc_done,
+		.run = rk3399_vpu_h264_enc_run,
+		.reset = rockchip_vpu2_enc_reset,
+		.init = hantro_h264_enc_init,
+		.exit = hantro_h264_enc_exit,
+	},
 };
 
 static const struct hantro_codec_ops rk3588_vpu981_codec_ops[] = {
@@ -673,7 +680,7 @@ static const struct hantro_irq rockchip_vpu2_irqs[] = {
 };
 
 static const struct hantro_irq rk3568_vepu_irqs[] = {
-	{ "vepu", rockchip_vpu2_vepu_irq },
+	{ "vepu", rockchip_vpu2_vepu_irq, rk3399_vepu_thread },
 };
 
 static const char * const rk3066_vpu_clk_names[] = {
@@ -799,7 +806,7 @@ const struct hantro_variant rk3568_vepu_variant = {
 	.enc_offset = 0x0,
 	.enc_fmts = rockchip_vpu_enc_fmts,
 	.num_enc_fmts = ARRAY_SIZE(rockchip_vpu_enc_fmts),
-	.codec = HANTRO_JPEG_ENCODER,
+	.codec = HANTRO_JPEG_ENCODER | HANTRO_H264_ENCODER,
 	.codec_ops = rk3568_vepu_codec_ops,
 	.irqs = rk3568_vepu_irqs,
 	.num_irqs = ARRAY_SIZE(rk3568_vepu_irqs),
