@@ -1339,7 +1339,7 @@ static struct i2c_driver xc7160_i2c_driver = {
 		.pm = &xc7160_pm_ops,
 		.of_match_table = of_match_ptr(xc7160_of_match),
 	},
-	.probe_new	= xc7160_probe,
+	.probe		= xc7160_probe,
 	.remove		= xc7160_remove,
 	.id_table	= xc7160_id,
 };

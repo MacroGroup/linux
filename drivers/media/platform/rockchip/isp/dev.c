@@ -566,13 +566,13 @@ unlock:
 }
 
 struct rkisp_async_subdev {
-	struct v4l2_async_subdev asd;
+	struct v4l2_async_connection asd;
 	struct v4l2_mbus_config mbus;
 };
 
 static int subdev_notifier_bound(struct v4l2_async_notifier *notifier,
 				 struct v4l2_subdev *subdev,
-				 struct v4l2_async_subdev *asd)
+				 struct v4l2_async_connection *asd)
 {
 	struct rkisp_device *isp_dev = container_of(notifier,
 					struct rkisp_device, notifier);
@@ -591,29 +591,9 @@ static int subdev_notifier_bound(struct v4l2_async_notifier *notifier,
 	return 0;
 }
 
-static int rkisp_fwnode_parse(struct device *dev,
-			       struct v4l2_fwnode_endpoint *vep,
-			       struct v4l2_async_subdev *asd)
-{
-	struct rkisp_async_subdev *rk_asd =
-			container_of(asd, struct rkisp_async_subdev, asd);
-
-	/*
-	 * MIPI sensor is linked with a mipi dphy and its media bus config can
-	 * not be get in here
-	 */
-	if (vep->bus_type != V4L2_MBUS_BT656 &&
-	    vep->bus_type != V4L2_MBUS_PARALLEL)
-		return 0;
-
-	rk_asd->mbus.type = vep->bus_type;
-
-	return 0;
-}
-
 static void subdev_notifier_unbind(struct v4l2_async_notifier *notifier,
 				   struct v4l2_subdev *subdev,
-				   struct v4l2_async_subdev *asd)
+				   struct v4l2_async_connection *asd)
 {
 	struct rkisp_device *isp_dev = container_of(notifier, struct rkisp_device, notifier);
 	struct rkisp_isp_subdev *isp_sdev = &isp_dev->isp_sdev;
@@ -639,19 +619,48 @@ static int isp_subdev_notifier(struct rkisp_device *isp_dev)
 {
 	struct v4l2_async_notifier *ntf = &isp_dev->notifier;
 	struct device *dev = isp_dev->dev;
+	struct fwnode_handle *ep, *fwnode;
+	struct v4l2_async_connection *asd;
+	struct v4l2_fwnode_endpoint v4l2_ep = {
+		.bus_type = V4L2_MBUS_UNKNOWN,
+	};
 	int ret;
 
-	v4l2_async_nf_init(ntf);
+	v4l2_async_nf_init(ntf, &isp_dev->v4l2_dev);
 
-	ret = v4l2_async_nf_parse_fwnode_endpoints(
-		dev, ntf, sizeof(struct rkisp_async_subdev),
-		rkisp_fwnode_parse);
-	if (ret < 0)
-		return ret;
+	ep = fwnode_graph_get_endpoint_by_id(dev_fwnode(dev), 0, 0,
+					     FWNODE_GRAPH_ENDPOINT_NEXT);
+	if (!ep) {
+		dev_err(dev, "Not connected to subdevice\n");
+		return -EINVAL;
+	}
+
+	ret = v4l2_fwnode_endpoint_parse(ep, &v4l2_ep);
+	if (ret) {
+		dev_err(dev, "Could not parse v4l2 endpoint\n");
+		fwnode_handle_put(ep);
+		return -EINVAL;
+	}
+
+	fwnode = fwnode_graph_get_remote_endpoint(ep);
+	fwnode_handle_put(ep);
 
 	ntf->ops = &subdev_notifier_ops;
 
-	return v4l2_async_nf_register(&isp_dev->v4l2_dev, ntf);
+	asd = v4l2_async_nf_add_fwnode(ntf, fwnode,
+				       struct v4l2_async_connection);
+	fwnode_handle_put(fwnode);
+	if (IS_ERR(asd))
+		return PTR_ERR(asd);
+
+	if (v4l2_ep.bus_type != V4L2_MBUS_PARALLEL &&
+	    v4l2_ep.bus_type != V4L2_MBUS_BT656) {
+		struct rkisp_async_subdev *s_asd =
+			container_of(asd, struct rkisp_async_subdev, asd);
+		s_asd->mbus.type = v4l2_ep.bus_type;
+	}
+
+	return v4l2_async_nf_register(ntf);
 }
 
 /***************************** platform deive *******************************/

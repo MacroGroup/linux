@@ -449,21 +449,16 @@ static ssize_t queue_wc_show(struct request_queue *q, char *page)
 static ssize_t queue_wc_store(struct request_queue *q, const char *page,
 			      size_t count)
 {
-	int set = -1;
-
-	if (!strncmp(page, "write back", 10))
-		set = 1;
-	else if (!strncmp(page, "write through", 13) ||
-		 !strncmp(page, "none", 4))
-		set = 0;
-
-	if (set == -1)
-		return -EINVAL;
-
-	if (set)
+	if (!strncmp(page, "write back", 10)) {
+		if (!test_bit(QUEUE_FLAG_HW_WC, &q->queue_flags))
+			return -EINVAL;
 		blk_queue_flag_set(QUEUE_FLAG_WC, q);
-	else
+	} else if (!strncmp(page, "write through", 13) ||
+		 !strncmp(page, "none", 4)) {
 		blk_queue_flag_clear(QUEUE_FLAG_WC, q);
+	} else {
+		return -EINVAL;
+	}
 
 	return count;
 }
@@ -620,6 +615,7 @@ static ssize_t queue_wb_lat_store(struct request_queue *q, const char *page,
 QUEUE_RW_ENTRY(queue_wb_lat, "wbt_lat_usec");
 #endif
 
+/* Common attributes for bio-based and request-based queues. */
 static struct attribute *queue_attrs[] = {
 	&queue_ra_entry.attr,
 	&queue_max_hw_sectors_entry.attr,
@@ -664,6 +660,7 @@ static struct attribute *queue_attrs[] = {
 	NULL,
 };
 
+/* Request-based queue attributes that are not relevant for bio-based queues. */
 static struct attribute *blk_mq_queue_attrs[] = {
 	&queue_requests_entry.attr,
 	&elv_iosched_entry.attr,

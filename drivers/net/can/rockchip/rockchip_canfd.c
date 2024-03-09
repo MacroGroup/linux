@@ -788,7 +788,7 @@ static irqreturn_t rockchip_canfd_interrupt(int irq, void *dev_id)
 		}
 		spin_lock(&rcan->tx_lock);
 		rockchip_canfd_write(rcan, CAN_CMD, 0);
-		can_get_echo_skb(ndev, 0, 0);
+		if (can_get_echo_skb(ndev, 0, NULL)) {}
 		netif_wake_queue(ndev);
 		spin_unlock(&rcan->tx_lock);
 		cancel_delayed_work(&rcan->tx_err_work);

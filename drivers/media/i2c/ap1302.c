@@ -1314,7 +1314,6 @@ static int ap1302_configure(struct ap1302_device *ap1302)
 	u8 sensor_link = ((!!ap1302->sensors[1].link_enabled) << 1) |
 		!!ap1302->sensors[0].link_enabled;
 
-
 	u32 value = AP1302_PREVIEW_HINF_CTRL_SPOOF |
 		AP1302_PREVIEW_HINF_CTRL_MIPI_LANES(data_lanes);
 
@@ -2469,20 +2468,13 @@ static int ap1302_s_stream(struct v4l2_subdev *sd, int enable)
 
 	mutex_lock(&ap1302->lock);
 
-	if (enable == ap1302->streaming)
-		goto done;
-
 	if (enable) {
 		ret = ap1302_configure(ap1302);
-		if (ret < 0)
-			goto done;
-
-		ret = ap1302_stall(ap1302, false);
-	} else {
+		if (!ret)
+			ret = ap1302_stall(ap1302, false);
+	} else
 		ret = ap1302_stall(ap1302, true);
-	}
 
-done:
 	mutex_unlock(&ap1302->lock);
 
 	if (ret < 0)
@@ -3010,7 +3002,7 @@ static ssize_t stall_standby_store(struct device *dev,
 	struct v4l2_subdev *sd = i2c_get_clientdata(to_i2c_client(dev));
 	struct ap1302_device *ap1302 = to_ap1302(sd);
 
-	if (strtobool(buf, &ap1302->stall_standby) < 0)
+	if (kstrtobool(buf, &ap1302->stall_standby) < 0)
 		return -EINVAL;
 
 	return size;
