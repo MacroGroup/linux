@@ -1709,6 +1709,10 @@ struct v4l2_ctrl_h264_encode_params {
 
 	__u32 flags; /* V4L2_H264_ENCODE_FLAG_ */
 
+	/* Nal parameters */
+	__u8 nal_reference_idc; // 2 bit
+	__u8 nalu_type; // 5 bit
+
 	/* Reference */
 
 	__u64 reference_ts;
