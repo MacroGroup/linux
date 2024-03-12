@@ -10,6 +10,7 @@
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/of_graph.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
@@ -258,13 +259,14 @@ static int csi2_dphy_s_stream(struct v4l2_subdev *sd, int on)
 	return ret;
 }
 
-static int csi2_dphy_g_frame_interval(struct v4l2_subdev *sd,
-					    struct v4l2_subdev_frame_interval *fi)
+static int csi2_dphy_get_frame_interval(struct v4l2_subdev *sd,
+					struct v4l2_subdev_state *sd_state,
+					struct v4l2_subdev_frame_interval *fi)
 {
 	struct v4l2_subdev *sensor = get_remote_sensor(sd);
 
 	if (sensor)
-		return v4l2_subdev_call(sensor, video, g_frame_interval, fi);
+		return v4l2_subdev_call_state_active(sensor, pad, get_frame_interval, fi);
 
 	return -EINVAL;
 }
@@ -380,7 +382,6 @@ static const struct v4l2_subdev_core_ops csi2_dphy_core_ops = {
 };
 
 static const struct v4l2_subdev_video_ops csi2_dphy_video_ops = {
-	.g_frame_interval = csi2_dphy_g_frame_interval,
 	.s_stream = csi2_dphy_s_stream,
 };
 
@@ -389,6 +390,7 @@ static const struct v4l2_subdev_pad_ops csi2_dphy_subdev_pad_ops = {
 	.get_fmt = csi2_dphy_get_set_fmt,
 	.get_selection = csi2_dphy_get_selection,
 	.get_mbus_config = csi2_dphy_g_mbus_config,
+	.get_frame_interval = csi2_dphy_get_frame_interval,
 };
 
 static const struct v4l2_subdev_ops csi2_dphy_subdev_ops = {
