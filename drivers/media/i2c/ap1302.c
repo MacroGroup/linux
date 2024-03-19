@@ -2274,6 +2274,9 @@ static int ap1302_init_state(struct v4l2_subdev *sd,
 		struct v4l2_mbus_framefmt *format =
 			ap1302_get_pad_format(ap1302, sd_state, pad, which);
 
+		if (!format)
+			return 0;
+
 		format->width = info->resolution.width;
 		format->height = info->resolution.height;
 
