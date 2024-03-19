@@ -1274,22 +1274,24 @@ static int xc7160_probe(struct i2c_client *client)
 	if (ret < 0)
 		goto err_power_off;
 
+	pm_runtime_set_active(dev);
+	pm_runtime_enable(dev);
+	pm_runtime_idle(dev);
+
 	snprintf(sd->name, sizeof(sd->name), "%s_%s",
 		 XC7160_NAME, dev_name(sd->dev));
 
 	ret = v4l2_async_register_subdev_sensor(sd);
 	if (ret) {
 		dev_err(dev, "v4l2 async register subdev failed\n");
-		goto err_clean_entity;
+		goto error_media_entity_runtime_pm;
 	}
-
-	pm_runtime_set_active(dev);
-	pm_runtime_enable(dev);
-	pm_runtime_idle(dev);
 
 	return 0;
 
-err_clean_entity:
+error_media_entity_runtime_pm:
+	pm_runtime_disable(dev);
+	pm_runtime_set_suspended(dev);
 	media_entity_cleanup(&sd->entity);
 
 err_power_off:
