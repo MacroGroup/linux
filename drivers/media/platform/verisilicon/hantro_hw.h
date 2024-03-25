@@ -11,7 +11,6 @@
 
 #include <linux/interrupt.h>
 #include <linux/v4l2-controls.h>
-#include <media/v4l2-mem2mem.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-vp9.h>
 #include <media/videobuf2-core.h>
@@ -61,25 +60,6 @@ struct hantro_aux_buf {
 	dma_addr_t dma;
 	size_t size;
 	unsigned long attrs;
-};
-
-struct hantro_enc_buf {
-	struct v4l2_m2m_buffer m2m_buf;
-	struct hantro_aux_buf rec_buf;
-};
-
-struct hantro_h264_enc_ctrls {
-	const  struct v4l2_ctrl_h264_encode_params *encode;
-	const  struct v4l2_ctrl_h264_encode_rc *rc;
-	struct v4l2_ctrl_h264_encode_feedback *feedback;
-};
-
-#define HANTRO_H264_ENC_CABAC_TABLE_COUNT	3
-#define HANTRO_H264_ENC_CABAC_TABLE_SIZE	(52 * 2 * 464)
-
-struct hantro_h264_enc_hw_ctx {
-	struct hantro_aux_buf cabac_table[HANTRO_H264_ENC_CABAC_TABLE_COUNT];
-	struct hantro_h264_enc_ctrls ctrls;
 };
 
 /* Max. number of entries in the DPB (HW limitation). */
@@ -436,9 +416,7 @@ extern const struct hantro_postproc_ops rockchip_vpu981_postproc_ops;
 extern const u32 hantro_vp8_dec_mc_filter[8][6];
 
 void hantro_watchdog(struct work_struct *work);
-void hantro_watchdog_kick(struct hantro_ctx *ctx);
 void hantro_run(struct hantro_ctx *ctx);
-void hantro_thread_done(struct hantro_dev *vpu, enum vb2_buffer_state result);
 void hantro_irq_done(struct hantro_dev *vpu,
 		     enum vb2_buffer_state result);
 void hantro_start_prepare_run(struct hantro_ctx *ctx);
@@ -451,16 +429,6 @@ int hantro_h1_jpeg_enc_run(struct hantro_ctx *ctx);
 int rockchip_vpu2_jpeg_enc_run(struct hantro_ctx *ctx);
 void hantro_h1_jpeg_enc_done(struct hantro_ctx *ctx);
 void rockchip_vpu2_jpeg_enc_done(struct hantro_ctx *ctx);
-
-unsigned int hantro_h264_enc_rec_luma_size(unsigned int width,
-					   unsigned int height);
-unsigned int hantro_h264_enc_rec_image_size(unsigned int width,
-					    unsigned int height);
-int hantro_h264_enc_prepare_run(struct hantro_ctx *ctx);
-void rk3399_vpu_h264_enc_done(struct hantro_ctx *ctx);
-int rk3399_vpu_h264_enc_run(struct hantro_ctx *ctx);
-int hantro_h264_enc_init(struct hantro_ctx *ctx);
-void hantro_h264_enc_exit(struct hantro_ctx *ctx);
 
 dma_addr_t hantro_h264_get_ref_buf(struct hantro_ctx *ctx,
 				   unsigned int dpb_idx);
