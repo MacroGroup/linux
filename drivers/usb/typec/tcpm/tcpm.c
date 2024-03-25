@@ -5471,17 +5471,8 @@ static void tcpm_pd_event_handler(struct kthread_work *work)
 		if (events & TCPM_CC_EVENT) {
 			enum typec_cc_status cc1, cc2;
 
-			if (port->tcpc->get_cc(port->tcpc, &cc1, &cc2) == 0) {
+			if (port->tcpc->get_cc(port->tcpc, &cc1, &cc2) == 0)
 				_tcpm_cc_change(port, cc1, cc2);
-				if (tcpm_port_is_source(port)) {
-					enum typec_cc_polarity polarity =
-						port->cc2 == TYPEC_CC_RD ? TYPEC_POLARITY_CC2
-							 : TYPEC_POLARITY_CC1;
-					tcpm_set_polarity(port, polarity);
-					tcpm_set_roles(port, port->attached, TYPEC_SOURCE,
-						       tcpm_data_role_for_source(port));
-				}
-			}
 		}
 		if (events & TCPM_FRS_EVENT) {
 			if (port->state == SNK_READY) {
