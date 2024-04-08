@@ -32,7 +32,6 @@ struct hantro_codec_ops;
 struct hantro_postproc_ops;
 
 #define HANTRO_JPEG_ENCODER	BIT(0)
-#define HANTRO_H264_ENCODER	BIT(1)
 #define HANTRO_ENCODERS		0x0000ffff
 #define HANTRO_MPEG2_DECODER	BIT(16)
 #define HANTRO_VP8_DECODER	BIT(17)
@@ -47,12 +46,10 @@ struct hantro_postproc_ops;
  *
  * @name:			irq name for device tree lookup
  * @handler:			interrupt handler
- * @thread:			interrupt thread (bottom half)
  */
 struct hantro_irq {
 	const char *name;
 	irqreturn_t (*handler)(int irq, void *priv);
-	irq_handler_t thread;
 };
 
 /**
@@ -110,7 +107,6 @@ struct hantro_variant {
  * enum hantro_codec_mode - codec operating mode.
  * @HANTRO_MODE_NONE:  No operating mode. Used for RAW video formats.
  * @HANTRO_MODE_JPEG_ENC: JPEG encoder.
- * @HANTRO_MODE_H264_ENC: H264 encoder.
  * @HANTRO_MODE_H264_DEC: H264 decoder.
  * @HANTRO_MODE_MPEG2_DEC: MPEG-2 decoder.
  * @HANTRO_MODE_VP8_DEC: VP8 decoder.
@@ -120,7 +116,6 @@ struct hantro_variant {
  */
 enum hantro_codec_mode {
 	HANTRO_MODE_NONE = -1,
-	HANTRO_MODE_H264_ENC,
 	HANTRO_MODE_JPEG_ENC,
 	HANTRO_MODE_H264_DEC,
 	HANTRO_MODE_MPEG2_DEC,
@@ -273,15 +268,12 @@ struct hantro_ctx {
 	/* Specific for particular codec modes. */
 	union {
 		struct hantro_h264_dec_hw_ctx h264_dec;
-		struct hantro_h264_enc_hw_ctx h264_enc;
 		struct hantro_mpeg2_dec_hw_ctx mpeg2_dec;
 		struct hantro_vp8_dec_hw_ctx vp8_dec;
 		struct hantro_hevc_dec_hw_ctx hevc_dec;
 		struct hantro_vp9_dec_hw_ctx vp9_dec;
 		struct hantro_av1_dec_hw_ctx av1_dec;
 	};
-
-	enum vb2_buffer_state result;
 };
 
 /**
@@ -336,6 +328,8 @@ struct hantro_vp9_decoded_buffer_info {
 	/* Info needed when the decoded frame serves as a reference frame. */
 	unsigned short width;
 	unsigned short height;
+	size_t chroma_offset;
+	size_t mv_offset;
 	u32 bit_depth : 4;
 };
 
@@ -477,11 +471,14 @@ hantro_get_dst_buf(struct hantro_ctx *ctx)
 bool hantro_needs_postproc(const struct hantro_ctx *ctx,
 			   const struct hantro_fmt *fmt);
 
+dma_addr_t
+hantro_postproc_get_dec_buf_addr(struct hantro_ctx *ctx, int index);
+
 static inline dma_addr_t
 hantro_get_dec_buf_addr(struct hantro_ctx *ctx, struct vb2_buffer *vb)
 {
 	if (hantro_needs_postproc(ctx, ctx->vpu_dst_fmt))
-		return ctx->postproc.dec_q[vb->index].dma;
+		return hantro_postproc_get_dec_buf_addr(ctx, vb->index);
 	return vb2_dma_contig_plane_dma_addr(vb, 0);
 }
 
@@ -490,22 +487,11 @@ vb2_to_hantro_decoded_buf(struct vb2_buffer *buf)
 {
 	return container_of(buf, struct hantro_decoded_buffer, base.vb.vb2_buf);
 }
-static inline struct hantro_enc_buf *
-hantro_get_enc_buf(struct vb2_v4l2_buffer *v4l2_buf)
-{
-	struct v4l2_m2m_buffer *m2m_buf;
-	struct hantro_enc_buf *enc_buf;
-
-	m2m_buf = container_of(v4l2_buf, struct v4l2_m2m_buffer, vb);
-	enc_buf = container_of(m2m_buf, struct hantro_enc_buf, m2m_buf);
-
-	return enc_buf;
-}
 
 void hantro_postproc_disable(struct hantro_ctx *ctx);
 void hantro_postproc_enable(struct hantro_ctx *ctx);
+int hantro_postproc_init(struct hantro_ctx *ctx);
 void hantro_postproc_free(struct hantro_ctx *ctx);
-int hantro_postproc_alloc(struct hantro_ctx *ctx);
 int hanto_postproc_enum_framesizes(struct hantro_ctx *ctx,
 				   struct v4l2_frmsizeenum *fsize);
 

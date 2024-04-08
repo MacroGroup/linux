@@ -10,7 +10,6 @@
 #define HANTRO_H1_REGS_H_
 
 /* Encoder registers. */
-#define H1_REG_PRODUCT_ID				0x000
 #define H1_REG_INTERRUPT				0x004
 #define     H1_REG_INTERRUPT_FRAME_RDY			BIT(2)
 #define     H1_REG_INTERRUPT_DIS_BIT			BIT(1)

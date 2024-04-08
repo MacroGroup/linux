@@ -1348,8 +1348,6 @@ do_full_getstr:
 		/* PROMPT can only be set if we have MEM_READ permission. */
 		snprintf(kdb_prompt_str, CMD_BUFLEN, kdbgetenv("PROMPT"),
 			 raw_smp_processor_id());
-		if (defcmd_in_progress)
-			strncat(kdb_prompt_str, "[defcmd]", CMD_BUFLEN);
 
 		/*
 		 * Fetch command from keyboard
@@ -2891,6 +2889,48 @@ static kdbtab_t nmicmd = {
 	.flags = KDB_ENABLE_ALWAYS_SAFE,
 };
 
-/* Initial_cpu);
-		} else {
-			diag                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
+/* Initialize the kdb command table. */
+static void __init kdb_inittab(void)
+{
+	kdb_register_table(maintab, ARRAY_SIZE(maintab));
+	if (arch_kgdb_ops.enable_nmi)
+		kdb_register_table(&nmicmd, 1);
+}
+
+/* Execute any commands defined in kdb_cmds.  */
+static void __init kdb_cmd_init(void)
+{
+	int i, diag;
+	for (i = 0; kdb_cmds[i]; ++i) {
+		diag = kdb_parse(kdb_cmds[i]);
+		if (diag)
+			kdb_printf("kdb command %s failed, kdb diag %d\n",
+				kdb_cmds[i], diag);
+	}
+	if (defcmd_in_progress) {
+		kdb_printf("Incomplete 'defcmd' set, forcing endefcmd\n");
+		kdb_parse("endefcmd");
+	}
+}
+
+/* Initialize kdb_printf, breakpoint tables and kdb state */
+void __init kdb_init(int lvl)
+{
+	static int kdb_init_lvl = KDB_NOT_INITIALIZED;
+	int i;
+
+	if (kdb_init_lvl == KDB_INIT_FULL || lvl <= kdb_init_lvl)
+		return;
+	for (i = kdb_init_lvl; i < lvl; i++) {
+		switch (i) {
+		case KDB_NOT_INITIALIZED:
+			kdb_inittab();		/* Initialize Command Table */
+			kdb_initbptab();	/* Initialize Breakpoints */
+			break;
+		case KDB_INIT_EARLY:
+			kdb_cmd_init();		/* Build kdb_cmds tables */
+			break;
+		}
+	}
+	kdb_init_lvl = lvl;
+}

@@ -8,7 +8,7 @@
  * 2.adjust bus format to UYVY for hal3 to get media device without isp
  * V0.0X01.0X04
  * 1.v4l2_fwnode_endpoint_parse get resource failed, so ignore it
- * 2.adjust init reg to power on interface, fix up preview and recording failed. 
+ * 2.adjust init reg to power on interface, fix up preview and recording failed.
  *
  */
 
@@ -116,8 +116,8 @@ struct xc7160 {
 	struct v4l2_ctrl	*vblank;
 	struct mutex		mutex;
 	bool			power_on;
-	bool			isp_out_colorbar;	//Mark whether the color bar should be output 
-	bool			initial_status;		//Whether the isp has been initialized 
+	bool			isp_out_colorbar;	//Mark whether the color bar should be output
+	bool			initial_status;		//Whether the isp has been initialized
 	const struct xc7160_mode *cur_mode;
 	u32 lane_data_num;
 };
@@ -509,7 +509,7 @@ static int xc7160_set_fmt(struct v4l2_subdev *sd,
 	sc8238_global_regs = mode->sensor_reg_list;
 
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
-		*v4l2_subdev_get_try_format(sd, sd_state, fmt->pad) = fmt->format;
+		*v4l2_subdev_state_get_format(sd_state, fmt->pad) = fmt->format;
 	} else {
 		xc7160->cur_mode = mode;
 		h_blank = mode->hts_def - mode->width;
@@ -534,7 +534,7 @@ static int xc7160_get_fmt(struct v4l2_subdev *sd,
 
 	mutex_lock(&xc7160->mutex);
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
-		fmt->format = *v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
+		fmt->format = *v4l2_subdev_state_get_format(sd_state, fmt->pad);
 	} else {
 		fmt->format.width = mode->width;
 		fmt->format.height = mode->height;
@@ -575,8 +575,9 @@ static int xc7160_enum_frame_sizes(struct v4l2_subdev *sd,
 	return 0;
 }
 
-static int xc7160_g_frame_interval(struct v4l2_subdev *sd,
-				   struct v4l2_subdev_frame_interval *fi)
+static int xc7160_get_frame_interval(struct v4l2_subdev *sd,
+				     struct v4l2_subdev_state *sd_state,
+				     struct v4l2_subdev_frame_interval *fi)
 {
 	struct xc7160 *xc7160 = to_xc7160(sd);
 	const struct xc7160_mode *mode = xc7160->cur_mode;
@@ -917,7 +918,7 @@ static int xc7160_s_power(struct v4l2_subdev *sd, int on)
 
 		if (xc7160->initial_status != true) {
 			xc7160_global_regs = xc7160->cur_mode->isp_reg_list;
-			sc8238_global_regs = xc7160->cur_mode->sensor_reg_list;	
+			sc8238_global_regs = xc7160->cur_mode->sensor_reg_list;
 			camera_isp_sensor_initial(xc7160);
 		}
 	} else {
@@ -1017,7 +1018,7 @@ static int xc7160_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct xc7160 *xc7160 = to_xc7160(sd);
 	struct v4l2_mbus_framefmt *try_fmt =
-		v4l2_subdev_get_try_format(sd, fh->state, 0);
+		v4l2_subdev_state_get_format(fh->state, 0);
 	const struct xc7160_mode *def_mode = &supported_modes[0];
 
 	mutex_lock(&xc7160->mutex);
@@ -1055,13 +1056,13 @@ static const struct v4l2_subdev_core_ops xc7160_core_ops = {
 
 static const struct v4l2_subdev_video_ops xc7160_video_ops = {
 	.s_stream = xc7160_s_stream,
-	.g_frame_interval = xc7160_g_frame_interval,
 };
 
 static const struct v4l2_subdev_pad_ops xc7160_pad_ops = {
 	.enum_mbus_code = xc7160_enum_mbus_code,
 	.enum_frame_size = xc7160_enum_frame_sizes,
 	.enum_frame_interval = xc7160_enum_frame_interval,
+	.get_frame_interval = xc7160_get_frame_interval,
 	.get_fmt = xc7160_get_fmt,
 	.set_fmt = xc7160_set_fmt,
 	.get_mbus_config = xc7160_get_mbus_config,
@@ -1079,7 +1080,7 @@ static int xc7160_set_ctrl(struct v4l2_ctrl *ctrl)
 					     struct xc7160, ctrl_handler);
 	struct i2c_client *client = xc7160->client;
 	s64 max;
-	
+
 	/* Propagate change of current control to all related controls */
 	switch (ctrl->id) {
 	case V4L2_CID_VBLANK:
@@ -1093,7 +1094,7 @@ static int xc7160_set_ctrl(struct v4l2_ctrl *ctrl)
 	}
 	if (pm_runtime_get(&client->dev) <= 0)
 		return 0;
-	
+
 	pm_runtime_put(&client->dev);
 
 	return 0;
@@ -1228,7 +1229,7 @@ static int xc7160_probe(struct i2c_client *client)
 		return ret;
 	}
 
-	/* Parse lane number */ 
+	/* Parse lane number */
 	endpoint_node = of_find_node_by_name(node, "endpoint");
 	if (endpoint_node != NULL) {
 		ret = v4l2_fwnode_endpoint_parse(&endpoint_node->fwnode, &vep);
@@ -1273,22 +1274,24 @@ static int xc7160_probe(struct i2c_client *client)
 	if (ret < 0)
 		goto err_power_off;
 
+	pm_runtime_set_active(dev);
+	pm_runtime_enable(dev);
+	pm_runtime_idle(dev);
+
 	snprintf(sd->name, sizeof(sd->name), "%s_%s",
 		 XC7160_NAME, dev_name(sd->dev));
 
 	ret = v4l2_async_register_subdev_sensor(sd);
 	if (ret) {
 		dev_err(dev, "v4l2 async register subdev failed\n");
-		goto err_clean_entity;
+		goto error_media_entity_runtime_pm;
 	}
-
-	pm_runtime_set_active(dev);
-	pm_runtime_enable(dev);
-	pm_runtime_idle(dev);
 
 	return 0;
 
-err_clean_entity:
+error_media_entity_runtime_pm:
+	pm_runtime_disable(dev);
+	pm_runtime_set_suspended(dev);
 	media_entity_cleanup(&sd->entity);
 
 err_power_off:

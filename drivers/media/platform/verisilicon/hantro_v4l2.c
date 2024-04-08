@@ -514,25 +514,14 @@ static int hantro_set_fmt_out(struct hantro_ctx *ctx,
 		return ret;
 
 	if (!ctx->is_encoder) {
-		struct vb2_queue *peer_vq;
-
 		/*
 		 * In order to support dynamic resolution change,
 		 * the decoder admits a resolution change, as long
-		 * as the pixelformat remains. Can't be done if streaming.
+		 * as the pixelformat remains.
 		 */
-		if (vb2_is_streaming(vq) || (vb2_is_busy(vq) &&
-		    pix_mp->pixelformat != ctx->src_fmt.pixelformat))
+		if (vb2_is_streaming(vq) && pix_mp->pixelformat != ctx->src_fmt.pixelformat) {
 			return -EBUSY;
-		/*
-		 * Since format change on the OUTPUT queue will reset
-		 * the CAPTURE queue, we can't allow doing so
-		 * when the CAPTURE queue has buffers allocated.
-		 */
-		peer_vq = v4l2_m2m_get_vq(ctx->fh.m2m_ctx,
-					  V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
-		if (vb2_is_busy(peer_vq))
-			return -EBUSY;
+		}
 	} else {
 		/*
 		 * The encoder doesn't admit a format change if
@@ -577,14 +566,7 @@ static int hantro_set_fmt_out(struct hantro_ctx *ctx,
 static int hantro_set_fmt_cap(struct hantro_ctx *ctx,
 			      struct v4l2_pix_format_mplane *pix_mp)
 {
-	struct vb2_queue *vq;
 	int ret;
-
-	/* Change not allowed if queue is busy. */
-	vq = v4l2_m2m_get_vq(ctx->fh.m2m_ctx,
-			     V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
-	if (vb2_is_busy(vq))
-		return -EBUSY;
 
 	if (ctx->is_encoder) {
 		struct vb2_queue *peer_vq;
@@ -785,6 +767,9 @@ const struct v4l2_ioctl_ops hantro_ioctl_ops = {
 	.vidioc_g_selection = vidioc_g_selection,
 	.vidioc_s_selection = vidioc_s_selection,
 
+	.vidioc_decoder_cmd = v4l2_m2m_ioctl_stateless_decoder_cmd,
+	.vidioc_try_decoder_cmd = v4l2_m2m_ioctl_stateless_try_decoder_cmd,
+
 	.vidioc_try_encoder_cmd = v4l2_m2m_ioctl_try_encoder_cmd,
 	.vidioc_encoder_cmd = vidioc_encoder_cmd,
 };
@@ -844,31 +829,6 @@ hantro_buf_plane_check(struct vb2_buffer *vb,
 	return 0;
 }
 
-static int hantro_buf_init(struct vb2_buffer *vb)
-{
-	struct vb2_queue *vq = vb->vb2_queue;
-	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
-	struct hantro_ctx *ctx = vb2_get_drv_priv(vq);
-	struct hantro_dev *vpu = ctx->dev;
-	struct hantro_enc_buf *enc_buf;
-	struct hantro_aux_buf *rec_buf;
-
-	if (!ctx->is_encoder || V4L2_TYPE_IS_OUTPUT(vq->type))
-		return 0;
-
-	enc_buf = hantro_get_enc_buf(vbuf);
-	rec_buf = &enc_buf->rec_buf;
-
-	rec_buf->size = hantro_h264_enc_rec_image_size(ctx->src_fmt.width,
-						       ctx->src_fmt.height);
-	rec_buf->cpu = dma_alloc_coherent(vpu->dev, rec_buf->size,
-					  &rec_buf->dma, GFP_KERNEL);
-	if (!rec_buf->cpu)
-		return -ENOMEM;
-
-	return 0;
-}
-
 static int hantro_buf_prepare(struct vb2_buffer *vb)
 {
 	struct vb2_queue *vq = vb->vb2_queue;
@@ -922,24 +882,6 @@ static void hantro_buf_queue(struct vb2_buffer *vb)
 	v4l2_m2m_buf_queue(ctx->fh.m2m_ctx, vbuf);
 }
 
-static void hantro_buf_cleanup(struct vb2_buffer *vb)
-{
-	struct vb2_queue *vq = vb->vb2_queue;
-	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
-	struct hantro_ctx *ctx = vb2_get_drv_priv(vq);
-	struct hantro_dev *vpu = ctx->dev;
-	struct hantro_enc_buf *enc_buf;
-	struct hantro_aux_buf *rec_buf;
-
-	if (!ctx->is_encoder || V4L2_TYPE_IS_OUTPUT(vq->type))
-		return;
-
-	enc_buf = hantro_get_enc_buf(vbuf);
-	rec_buf = &enc_buf->rec_buf;
-
-	dma_free_coherent(vpu->dev, rec_buf->size, rec_buf->cpu, rec_buf->dma);
-}
-
 static bool hantro_vq_is_coded(struct vb2_queue *q)
 {
 	struct hantro_ctx *ctx = vb2_get_drv_priv(q);
@@ -976,7 +918,7 @@ static int hantro_start_streaming(struct vb2_queue *q, unsigned int count)
 		}
 
 		if (hantro_needs_postproc(ctx, ctx->vpu_dst_fmt)) {
-			ret = hantro_postproc_alloc(ctx);
+			ret = hantro_postproc_init(ctx);
 			if (ret)
 				goto err_codec_exit;
 		}
@@ -1051,12 +993,10 @@ static int hantro_buf_out_validate(struct vb2_buffer *vb)
 
 const struct vb2_ops hantro_queue_ops = {
 	.queue_setup = hantro_queue_setup,
-	.buf_init = hantro_buf_init,
 	.buf_prepare = hantro_buf_prepare,
 	.buf_queue = hantro_buf_queue,
 	.buf_out_validate = hantro_buf_out_validate,
 	.buf_request_complete = hantro_buf_request_complete,
-	.buf_cleanup = hantro_buf_cleanup,
 	.start_streaming = hantro_start_streaming,
 	.stop_streaming = hantro_stop_streaming,
 	.wait_prepare = vb2_ops_wait_prepare,
