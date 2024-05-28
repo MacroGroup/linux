@@ -932,12 +932,25 @@ static const struct v4l2_subdev_video_ops imx219_video_ops = {
 	.s_stream = imx219_set_stream,
 };
 
+static int imx219_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
+	struct v4l2_mbus_config *config)
+{
+	struct imx219 *imx219 = to_imx219(sd);
+
+	config->type = V4L2_MBUS_CSI2_DPHY;
+	config->bus.mipi_csi2.flags = 0;
+	config->bus.mipi_csi2.num_data_lanes = imx219->lanes;
+
+	return 0;
+}
+
 static const struct v4l2_subdev_pad_ops imx219_pad_ops = {
 	.enum_mbus_code = imx219_enum_mbus_code,
 	.get_fmt = v4l2_subdev_get_fmt,
 	.set_fmt = imx219_set_pad_format,
 	.get_selection = imx219_get_selection,
 	.enum_frame_size = imx219_enum_frame_size,
+	.get_mbus_config = imx219_g_mbus_config,
 };
 
 static const struct v4l2_subdev_ops imx219_subdev_ops = {
