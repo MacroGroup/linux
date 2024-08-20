@@ -2336,7 +2336,7 @@ int rkisp_init_params_vdev_v1x(struct rkisp_isp_params_vdev *params_vdev)
 		params_vdev->priv_cfg = &rkisp1_v10_isp_params_config;
 	}
 
-	params_vdev->isp1x_params = vmalloc(sizeof(*params_vdev->isp1x_params));
+	params_vdev->isp1x_params = kvmalloc(sizeof(*params_vdev->isp1x_params), GFP_KERNEL);
 	if (!params_vdev->isp1x_params)
 		return -ENOMEM;
 
@@ -2347,5 +2347,5 @@ int rkisp_init_params_vdev_v1x(struct rkisp_isp_params_vdev *params_vdev)
 
 void rkisp_uninit_params_vdev_v1x(struct rkisp_isp_params_vdev *params_vdev)
 {
-	vfree(params_vdev->isp1x_params);
+	kvfree(params_vdev->isp1x_params);
 }
