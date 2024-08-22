@@ -1068,10 +1068,12 @@ done_endpoint_free:
 static int imx335_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
 				struct v4l2_mbus_config *config)
 {
+	struct imx335 *imx335 = to_imx335(sd);
+
 	config->type = V4L2_MBUS_CSI2_DPHY;
 	config->bus.mipi_csi2.flags = 0;
-	config->bus.mipi_csi2.num_data_lanes = IMX335_NUM_DATA_LANES;//imx335->lane_data_num;
-	
+	config->bus.mipi_csi2.num_data_lanes = imx335->lane_mode + 1;
+
 	return 0;
 }
 
