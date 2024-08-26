@@ -100,18 +100,6 @@ void rkisp_set_clk_rate(struct clk *clk, unsigned long rate)
 	clk_set_rate(clk, rate);
 }
 
-static int __maybe_unused __rkisp_clr_unready_dev(void)
-{
-	struct rkisp_device *isp_dev;
-
-	mutex_lock(&rkisp_dev_mutex);
-	list_for_each_entry(isp_dev, &rkisp_device_list, list)
-		v4l2_async_notifier_clr_unready_dev(&isp_dev->notifier);
-	mutex_unlock(&rkisp_dev_mutex);
-
-	return 0;
-}
-
 /**************************** pipeline operations *****************************/
 
 static int __isp_pipeline_prepare(struct rkisp_pipeline *p,
@@ -974,16 +962,6 @@ static int __maybe_unused rkisp_runtime_resume(struct device *dev)
 	mutex_unlock(&isp_dev->hw_dev->dev_lock);
 	return (ret > 0) ? 0 : ret;
 }
-
-#ifndef MODULE
-static int __init rkisp_clr_unready_dev(void)
-{
-	__rkisp_clr_unready_dev();
-
-	return 0;
-}
-late_initcall_sync(rkisp_clr_unready_dev);
-#endif
 
 static const struct dev_pm_ops rkisp_plat_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend,
