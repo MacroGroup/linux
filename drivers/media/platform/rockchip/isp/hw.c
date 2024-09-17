@@ -910,14 +910,13 @@ err:
 	return ret;
 }
 
-static int rkisp_hw_remove(struct platform_device *pdev)
+static void rkisp_hw_remove(struct platform_device *pdev)
 {
 	struct rkisp_hw_dev *hw_dev = platform_get_drvdata(pdev);
 
 	rkisp_put_sram(hw_dev);
 	pm_runtime_disable(&pdev->dev);
 	mutex_destroy(&hw_dev->dev_lock);
-	return 0;
 }
 
 static void rkisp_hw_shutdown(struct platform_device *pdev)
@@ -1032,7 +1031,7 @@ static struct platform_driver rkisp_hw_drv = {
 		.pm = &rkisp_hw_pm_ops,
 	},
 	.probe = rkisp_hw_probe,
-	.remove = rkisp_hw_remove,
+	.remove_new = rkisp_hw_remove,
 	.shutdown = rkisp_hw_shutdown,
 };
 
