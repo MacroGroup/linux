@@ -3813,16 +3813,18 @@ static int ap1302_probe(struct i2c_client *client)
 	ap1302->dev = &client->dev;
 	ap1302->client = client;
 
-	/* NVMEM */
-	ap1302->nvmem = devm_nvmem_device_get(ap1302->dev, NULL);
-	if (IS_ERR(ap1302->nvmem)) {
-		if (PTR_ERR(ap1302->nvmem) == -EPROBE_DEFER)
-			return -EPROBE_DEFER;
-
-		ap1302->nvmem = NULL;
-	}
-
 	dev_info(ap1302->dev, "AP1302 Driver probe\n");
+
+	/* NVMEM */
+	if (of_find_property(ap1302->dev->of_node, "nvmem", NULL)) {
+		ap1302->nvmem = devm_nvmem_device_get(ap1302->dev, NULL);
+		if (IS_ERR(ap1302->nvmem)) {
+			if (PTR_ERR(ap1302->nvmem) == -EPROBE_DEFER)
+				return -EPROBE_DEFER;
+
+			ap1302->nvmem = NULL;
+		}
+	}
 
 	ap1302->regmap16 = devm_regmap_init_i2c(client, &ap1302_reg16_config);
 	if (IS_ERR(ap1302->regmap16))
