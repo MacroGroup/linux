@@ -62,6 +62,17 @@ config VIDEO_AP1302
 	  This is a Video4Linux2 sensor-level driver for the external
 	  ISP AP1302.
 
+config VIDEO_AR0233
+	tristate "onsemi AR0233 sensor support"
+	depends on OF || COMPILE_TEST
+	select V4L2_CCI_I2C
+	help
+	  This is a Video4Linux2 sensor driver for the onsemi AR0233 camera
+	  sensor.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called ar0233.
+
 config VIDEO_AR0521
 	tristate "ON Semiconductor AR0521 sensor support"
 	help
