@@ -579,15 +579,15 @@ struct ub960_format_info {
 };
 
 static const struct ub960_format_info ub960_formats[] = {
+	{ .code = MEDIA_BUS_FMT_SGRBG12_1X12, .bpp = 12, .datatype = MIPI_CSI2_DT_RAW12, },
+	{ .code = MEDIA_BUS_FMT_SBGGR12_1X12, .bpp = 12, .datatype = MIPI_CSI2_DT_RAW12, },
+	{ .code = MEDIA_BUS_FMT_SGBRG12_1X12, .bpp = 12, .datatype = MIPI_CSI2_DT_RAW12, },
+	{ .code = MEDIA_BUS_FMT_SRGGB12_1X12, .bpp = 12, .datatype = MIPI_CSI2_DT_RAW12, },
+
 	{ .code = MEDIA_BUS_FMT_YUYV8_1X16, .bpp = 16, .datatype = MIPI_CSI2_DT_YUV422_8B, },
 	{ .code = MEDIA_BUS_FMT_UYVY8_1X16, .bpp = 16, .datatype = MIPI_CSI2_DT_YUV422_8B, },
 	{ .code = MEDIA_BUS_FMT_VYUY8_1X16, .bpp = 16, .datatype = MIPI_CSI2_DT_YUV422_8B, },
 	{ .code = MEDIA_BUS_FMT_YVYU8_1X16, .bpp = 16, .datatype = MIPI_CSI2_DT_YUV422_8B, },
-
-	{ .code = MEDIA_BUS_FMT_SBGGR12_1X12, .bpp = 12, .datatype = MIPI_CSI2_DT_RAW12, },
-	{ .code = MEDIA_BUS_FMT_SGBRG12_1X12, .bpp = 12, .datatype = MIPI_CSI2_DT_RAW12, },
-	{ .code = MEDIA_BUS_FMT_SGRBG12_1X12, .bpp = 12, .datatype = MIPI_CSI2_DT_RAW12, },
-	{ .code = MEDIA_BUS_FMT_SRGGB12_1X12, .bpp = 12, .datatype = MIPI_CSI2_DT_RAW12, },
 };
 
 static const struct ub960_format_info *ub960_find_format(u32 code)
@@ -2766,7 +2766,7 @@ static int _ub960_set_routing(struct v4l2_subdev *sd,
 	static const struct v4l2_mbus_framefmt format = {
 		.width = 640,
 		.height = 480,
-		.code = MEDIA_BUS_FMT_UYVY8_1X16,
+		.code = MEDIA_BUS_FMT_SGRBG12_1X12,
 		.field = V4L2_FIELD_NONE,
 		.colorspace = V4L2_COLORSPACE_SRGB,
 		.ycbcr_enc = V4L2_YCBCR_ENC_601,
