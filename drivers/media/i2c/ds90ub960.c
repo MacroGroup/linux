@@ -2966,6 +2966,19 @@ static int ub960_init_state(struct v4l2_subdev *sd,
 	return _ub960_set_routing(sd, state, &routing);
 }
 
+static int ub960_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
+			       struct v4l2_mbus_config *config)
+{
+	struct ub960_data *priv = sd_to_ub960(sd);
+
+	config->type = V4L2_MBUS_CSI2_DPHY;
+	config->bus.mipi_csi2.flags = 0;
+	config->bus.mipi_csi2.num_data_lanes =
+		priv->txports[ub960_pad_to_port(priv, pad_id)]->num_data_lanes;
+
+	return 0;
+}
+
 static const struct v4l2_subdev_pad_ops ub960_pad_ops = {
 	.enable_streams = ub960_enable_streams,
 	.disable_streams = ub960_disable_streams,
@@ -2975,6 +2988,8 @@ static const struct v4l2_subdev_pad_ops ub960_pad_ops = {
 
 	.get_fmt = v4l2_subdev_get_fmt,
 	.set_fmt = ub960_set_fmt,
+
+	.get_mbus_config = ub960_g_mbus_config,
 };
 
 static int ub960_log_status(struct v4l2_subdev *sd)
