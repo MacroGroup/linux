@@ -3130,9 +3130,14 @@ static const struct v4l2_subdev_internal_ops ub960_internal_ops = {
 	.init_state = ub960_init_state,
 };
 
+static const struct v4l2_subdev_video_ops ub960_video_ops = {
+	.s_stream = v4l2_subdev_s_stream_helper,
+};
+
 static const struct v4l2_subdev_ops ub960_subdev_ops = {
 	.core = &ub960_subdev_core_ops,
 	.pad = &ub960_pad_ops,
+	.video = &ub960_video_ops,
 };
 
 static const struct media_entity_operations ub960_entity_ops = {
