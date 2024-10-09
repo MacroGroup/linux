@@ -196,8 +196,8 @@ static int ar0233_configure_pll(struct ar0233 *sensor)
 	int ret = 0;
 
 	if (sensor->pll_mul & 1)
-		dev_warn_once(sensor->dev,
-			"Odd PLL multiplier, Link frequency will not be exact\n");
+		dev_warn_once(sensor->dev, "Odd PLL multiplier, "
+			      "Link frequency will not be exact\n");
 
 	cci_write(sensor->cci, AR0233_PRE_PLL_CLK_DIV,
 		  sensor->pll_div, &ret);
@@ -261,7 +261,7 @@ static int ar0233_start_streaming(struct ar0233 *sensor,
 	info = ar0233_format_info(sensor, format->code, true);
 
 	/* For REV1, 24 bit is not operational (OUTPUT) */
-	if ((sensor->customer_rev < 2) && (info->bpp_output == 24)) {
+	if (sensor->customer_rev < 2 && info->bpp_output == 24) {
 		dev_err(sensor->dev, "The sensor does not support 24bpp.\n");
 		return -EINVAL;
 	}
@@ -342,8 +342,8 @@ static int ar0233_pll_calculate(struct ar0233 *sensor, unsigned int bpp)
 
 	sensor->pixel_rate = DIV_ROUND_CLOSEST_ULL(link_freq, bpp_div);
 
-	if ((sensor->pixel_rate < 4000000ULL) ||
-	    (sensor->pixel_rate > 125000000ULL)) {
+	if (sensor->pixel_rate < 4000000ULL ||
+	    sensor->pixel_rate > 125000000ULL) {
 		dev_err(sensor->dev, "Link frequency out of bounds\n");
 		return -EINVAL;
 	}
@@ -425,7 +425,6 @@ static int ar0233_s_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct ar0233 *sensor = container_of(ctrl->handler, struct ar0233, ctrls);
 	const struct v4l2_subdev_state *state;
-	const struct v4l2_mbus_framefmt *format;
 	const struct v4l2_rect *crop;
 	int ret = 0;
 	u16 reg;
@@ -438,7 +437,6 @@ static int ar0233_s_ctrl(struct v4l2_ctrl *ctrl)
 		return 0;
 
 	state = v4l2_subdev_get_locked_active_state(&sensor->sd);
-	format = v4l2_subdev_state_get_format(state, 0);
 	crop = v4l2_subdev_state_get_crop(state, 0);
 
 	switch (ctrl->id) {
@@ -643,7 +641,7 @@ static int ar0233_set_fmt(struct v4l2_subdev *sd,
 	const struct v4l2_rect *crop;
 
 	if (v4l2_subdev_is_streaming(sd) &&
-	    (format->which == V4L2_SUBDEV_FORMAT_ACTIVE))
+	    format->which == V4L2_SUBDEV_FORMAT_ACTIVE)
 		return -EBUSY;
 
 	fmt = v4l2_subdev_state_get_format(state, format->pad);
@@ -698,7 +696,7 @@ static int ar0233_set_selection(struct v4l2_subdev *sd,
 	struct v4l2_rect *crop;
 
 	if (v4l2_subdev_is_streaming(sd) &&
-	    (sel->which == V4L2_SUBDEV_FORMAT_ACTIVE))
+	    sel->which == V4L2_SUBDEV_FORMAT_ACTIVE)
 		return -EBUSY;
 
 	if (sel->target != V4L2_SEL_TGT_CROP)
@@ -941,7 +939,7 @@ static int ar0233_power_on(struct ar0233 *sensor)
 	}
 
 	clk_rate = clk_get_rate(sensor->clk);
-	if ((clk_rate < 6000000) || (clk_rate > 64000000)) {
+	if (clk_rate < 6000000 || clk_rate > 64000000) {
 		dev_err(sensor->dev, "Clock frequency out of bounds\n");
 		clk_disable_unprepare(sensor->clk);
 		regulator_bulk_disable(ARRAY_SIZE(ar0233_supplies),
