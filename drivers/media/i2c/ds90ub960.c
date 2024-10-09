@@ -1169,8 +1169,8 @@ static int ub960_parse_dt_txport(struct ub960_data *priv,
 		break;
 	case MHZ(1200):
 		/* UB954 does not support 1.2 Gbps */
-		if ((priv->hw_data->chip_type == UB960) ||
-		    (priv->hw_data->chip_type == UB9702))
+		if (priv->hw_data->chip_type == UB960 ||
+		    priv->hw_data->chip_type == UB9702)
 			break;
 		fallthrough;
 	default:
@@ -3274,8 +3274,8 @@ ub960_parse_dt_rxport_link_properties(struct ub960_data *priv,
 		return -EINVAL;
 	}
 
-	if ((priv->hw_data->chip_family != FAMILY_FPD4) &&
-	    (cdr_mode == RXPORT_CDR_FPD4)) {
+	if (priv->hw_data->chip_family != FAMILY_FPD4 &&
+	    cdr_mode == RXPORT_CDR_FPD4) {
 		dev_err(dev, "rx%u: FPD-Link 4 CDR not supported\n", nport);
 		return -EINVAL;
 	}
@@ -3902,7 +3902,7 @@ static int ub960_enable_core_hw(struct ub960_data *priv)
 	default:
 		model = "Unknown";
 		break;
-	};
+	}
 
 	dev_info(dev, "Found %s (rev/mask %#04x)\n", model, rev_mask);
 
