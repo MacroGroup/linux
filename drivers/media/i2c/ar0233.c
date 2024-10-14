@@ -1154,7 +1154,7 @@ static const struct dev_pm_ops __maybe_unused ar0233_pm_ops = {
 	RUNTIME_PM_OPS(ar0233_runtime_suspend, ar0233_runtime_resume, NULL)
 };
 
-static const struct of_device_id ar0233_of_match[] = {
+static const struct of_device_id __maybe_unused ar0233_of_match[] = {
 	{ .compatible = "onnn,ar0233" },
 	{ }
 };
