@@ -370,9 +370,7 @@ static int ar0233_pll_update(struct ar0233 *sensor,
 	int ret;
 
 	ret = ar0233_pll_calculate(sensor, info->bpp_output);
-	if (ret)
-		dev_err(sensor->dev, "PLL calculations failed: %d\n", ret);
-	else
+	if (!ret)
 		__v4l2_ctrl_s_ctrl_int64(sensor->rate, sensor->pixel_rate);
 
 	return ret;
