@@ -196,8 +196,8 @@ static int ar0233_configure_pll(struct ar0233 *sensor)
 	int ret = 0;
 
 	if (sensor->pll_mul & 1)
-		dev_warn_once(sensor->dev, "Odd PLL multiplier, "
-			      "Link frequency will not be exact\n");
+		dev_warn_once(sensor->dev,
+			      "Odd PLL multiplier, Link frequency will not be exact\n");
 
 	cci_write(sensor->cci, AR0233_PRE_PLL_CLK_DIV,
 		  sensor->pll_div, &ret);
