@@ -310,7 +310,9 @@ void v4l2_async_nf_cleanup(struct v4l2_async_notifier *notifier);
  *
  * @sd: pointer to &struct v4l2_subdev
  */
-int v4l2_async_register_subdev(struct v4l2_subdev *sd);
+#define v4l2_async_register_subdev(sd) \
+	__v4l2_async_register_subdev(sd, THIS_MODULE)
+int __v4l2_async_register_subdev(struct v4l2_subdev *sd, struct module *module);
 
 /**
  * v4l2_async_register_subdev_sensor - registers a sensor sub-device to the
@@ -341,12 +343,4 @@ v4l2_async_register_subdev_sensor(struct v4l2_subdev *sd);
  * @sd: pointer to &struct v4l2_subdev
  */
 void v4l2_async_unregister_subdev(struct v4l2_subdev *sd);
-
-/**
-* v4l2_async_notifier_clr_unready_dev - remove unready subdevice
-*
-* @notifier: pointer to &struct v4l2_async_notifier
-*/
-int v4l2_async_notifier_clr_unready_dev(struct v4l2_async_notifier *notifier);
-
 #endif

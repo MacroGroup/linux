@@ -2839,14 +2839,10 @@ static int ap1302_sensor_parse_of(struct ap1302_device *ap1302,
 				  struct device_node *node)
 {
 	struct ap1302_sensor *sensor;
-	u32 reg;
-	int ret;
-	int num_supplies;
+	int ret, num_supplies, count;
 	struct property *prop;
 	const char *supply;
-	u32 delay;
-	const __be32 *p;
-	int count;
+	u32 reg, delay;
 
 	/* Retrieve the sensor index from the reg property. */
 	ret = of_property_read_u32(node, "reg", &reg);
@@ -2893,7 +2889,7 @@ static int ap1302_sensor_parse_of(struct ap1302_device *ap1302,
 			sensor->supplies_data[count++].name = supply;
 
 		count = 0;
-		of_property_for_each_u32(node, "regulator-delays", prop, p, delay)
+		of_property_for_each_u32(node, "regulator-delays", delay)
 			sensor->supplies_data[count++].post_delay_us = delay;
 	}
 
@@ -3813,16 +3809,18 @@ static int ap1302_probe(struct i2c_client *client)
 	ap1302->dev = &client->dev;
 	ap1302->client = client;
 
-	/* NVMEM */
-	ap1302->nvmem = devm_nvmem_device_get(ap1302->dev, NULL);
-	if (IS_ERR(ap1302->nvmem)) {
-		if (PTR_ERR(ap1302->nvmem) == -EPROBE_DEFER)
-			return -EPROBE_DEFER;
-
-		ap1302->nvmem = NULL;
-	}
-
 	dev_info(ap1302->dev, "AP1302 Driver probe\n");
+
+	/* NVMEM */
+	if (of_find_property(ap1302->dev->of_node, "nvmem", NULL)) {
+		ap1302->nvmem = devm_nvmem_device_get(ap1302->dev, NULL);
+		if (IS_ERR(ap1302->nvmem)) {
+			if (PTR_ERR(ap1302->nvmem) == -EPROBE_DEFER)
+				return -EPROBE_DEFER;
+
+			ap1302->nvmem = NULL;
+		}
+	}
 
 	ap1302->regmap16 = devm_regmap_init_i2c(client, &ap1302_reg16_config);
 	if (IS_ERR(ap1302->regmap16))

@@ -4406,7 +4406,7 @@ int rkisp_init_params_vdev_v2x(struct rkisp_isp_params_vdev *params_vdev)
 		return -ENOMEM;
 	}
 
-	params_vdev->isp2x_params = vmalloc(sizeof(*params_vdev->isp2x_params));
+	params_vdev->isp2x_params = kvmalloc(sizeof(*params_vdev->isp2x_params), GFP_KERNEL);
 	if (!params_vdev->isp2x_params) {
 		dev_err(dev, "call vmalloc failure\n");
 		kfree(priv_val);
@@ -4447,7 +4447,7 @@ err:
 
 	for (i = 0; i < RKISP_PARAM_LSC_LUT_BUF_NUM; i++)
 		rkisp_free_buffer(params_vdev->dev, &priv_val->buf_lsclut[i]);
-	vfree(params_vdev->isp2x_params);
+	kvfree(params_vdev->isp2x_params);
 
 	return ret;
 }
@@ -4467,7 +4467,7 @@ void rkisp_uninit_params_vdev_v2x(struct rkisp_isp_params_vdev *params_vdev)
 
 	for (i = 0; i < RKISP_PARAM_LSC_LUT_BUF_NUM; i++)
 		rkisp_free_buffer(params_vdev->dev, &priv_val->buf_lsclut[i]);
-	vfree(params_vdev->isp2x_params);
+	kvfree(params_vdev->isp2x_params);
 	kfree(priv_val);
 	params_vdev->priv_val = NULL;
 }
