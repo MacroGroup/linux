@@ -1074,7 +1074,7 @@ static void rockchip_csi2_dphy_hw_remove(struct platform_device *pdev)
 
 static struct platform_driver rockchip_csi2_dphy_hw_driver = {
 	.probe = rockchip_csi2_dphy_hw_probe,
-	.remove_new = rockchip_csi2_dphy_hw_remove,
+	.remove = rockchip_csi2_dphy_hw_remove,
 	.driver = {
 		.name = "rockchip-csi2-dphy-hw",
 		.of_match_table = rockchip_csi2_dphy_hw_match_id,

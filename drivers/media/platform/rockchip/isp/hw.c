@@ -856,7 +856,7 @@ static int rkisp_hw_probe(struct platform_device *pdev)
 	hw_dev->clk_rate_tbl = match_data->clk_rate_tbl;
 	hw_dev->num_clk_rate_tbl = match_data->num_clk_rate_tbl;
 
-	hw_dev->reset = devm_reset_control_array_get(dev, false, false);
+	hw_dev->reset = devm_reset_control_array_get(dev, RESET_CONTROL_EXCLUSIVE_RELEASED);
 	if (IS_ERR(hw_dev->reset)) {
 		dev_dbg(dev, "failed to get reset\n");
 		hw_dev->reset = NULL;
@@ -1031,7 +1031,7 @@ static struct platform_driver rkisp_hw_drv = {
 		.pm = &rkisp_hw_pm_ops,
 	},
 	.probe = rkisp_hw_probe,
-	.remove_new = rkisp_hw_remove,
+	.remove = rkisp_hw_remove,
 	.shutdown = rkisp_hw_shutdown,
 };
 

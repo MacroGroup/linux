@@ -815,7 +815,7 @@ static const struct dev_pm_ops rockchip_csi2_dphy_pm_ops = {
 
 struct platform_driver rockchip_csi2_dphy_driver = {
 	.probe = rockchip_csi2_dphy_probe,
-	.remove_new = rockchip_csi2_dphy_remove,
+	.remove = rockchip_csi2_dphy_remove,
 	.driver = {
 		.name = "rockchip-csi2-dphy",
 		.pm = &rockchip_csi2_dphy_pm_ops,
