@@ -856,7 +856,7 @@ static int rkisp_hw_probe(struct platform_device *pdev)
 	hw_dev->clk_rate_tbl = match_data->clk_rate_tbl;
 	hw_dev->num_clk_rate_tbl = match_data->num_clk_rate_tbl;
 
-	hw_dev->reset = devm_reset_control_array_get(dev, RESET_CONTROL_EXCLUSIVE_DEASSERTED);
+	hw_dev->reset = devm_reset_control_array_get(dev, RESET_CONTROL_EXCLUSIVE);
 	if (IS_ERR(hw_dev->reset)) {
 		dev_dbg(dev, "failed to get reset\n");
 		hw_dev->reset = NULL;
