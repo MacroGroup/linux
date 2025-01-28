@@ -98,6 +98,7 @@ static netdev_tx_t vcan_tx(struct sk_buff *skb, struct net_device *dev)
 
 	/* set flag whether this packet has to be looped back */
 	loop = skb->pkt_type == PACKET_LOOPBACK;
+	udelay(500);
 
 	skb_tx_timestamp(skb);
 
@@ -111,6 +112,7 @@ static netdev_tx_t vcan_tx(struct sk_buff *skb, struct net_device *dev)
 			stats->rx_bytes += len;
 		}
 		consume_skb(skb);
+
 		return NETDEV_TX_OK;
 	}
 
