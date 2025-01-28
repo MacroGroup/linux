@@ -164,7 +164,7 @@ static void rkisp_params_vb2_buf_queue(struct vb2_buffer *vb)
 			params_vdev->dev->is_first_double = false;
 			rkisp_trigger_read_back(params_vdev->dev, false, false, false);
 		}
-		dev_info(params_vdev->dev->dev, "first params buf queue\n");
+		dev_dbg(params_vdev->dev->dev, "first params buf queue\n");
 		return;
 	}
 
