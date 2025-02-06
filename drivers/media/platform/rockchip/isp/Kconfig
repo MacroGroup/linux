@@ -25,8 +25,8 @@ config VIDEO_ROCKCHIP_ISP_VERSION_V21
 #config VIDEO_ROCKCHIP_ISP_VERSION_V20
 #	bool "isp20 for rv1126 and rv1109"
 
-#config VIDEO_ROCKCHIP_ISP_VERSION_V30
-#	bool "isp30 for rk3588"
+config VIDEO_ROCKCHIP_ISP_VERSION_V30
+	bool "isp30 for rk3588"
 
 #config VIDEO_ROCKCHIP_ISP_VERSION_V32
 #	bool "isp32 for rv1106 rk3562"
