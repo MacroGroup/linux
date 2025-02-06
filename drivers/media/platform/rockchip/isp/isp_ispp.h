@@ -8,7 +8,7 @@
 #include <media/v4l2-subdev.h>
 #include <media/videobuf2-v4l2.h>
 #include <linux/rk-isp1-config.h>
-#include "rk-ispp-config.h"
+#include <linux/rk-ispp-config.h>
 
 #define RKISP_BUF_MAX 2
 #define RKISPP_BUF_MAX 2

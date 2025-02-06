@@ -16,18 +16,18 @@ if VIDEO_ROCKCHIP_ISP
 config VIDEO_ROCKCHIP_ISP_VERSION_V21
 	bool "isp21 for rk3566 and rk3568"
 
-# The modules above is not tested even by compile, so lets keep
+# The options below is not tested even by compile, so lets keep
 # it in the tree, but disable for select
-#
+
 #config VIDEO_ROCKCHIP_ISP_VERSION_V1X
 #	bool "isp1 for rk1808 rk3288 rk3326 rk3368 rk3399"
-#
+
 #config VIDEO_ROCKCHIP_ISP_VERSION_V20
 #	bool "isp20 for rv1126 and rv1109"
-#
+
 #config VIDEO_ROCKCHIP_ISP_VERSION_V30
 #	bool "isp30 for rk3588"
-#
+
 #config VIDEO_ROCKCHIP_ISP_VERSION_V32
 #	bool "isp32 for rv1106 rk3562"
 
