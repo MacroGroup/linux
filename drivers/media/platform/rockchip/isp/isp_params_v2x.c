@@ -4471,3 +4471,4 @@ void rkisp_uninit_params_vdev_v2x(struct rkisp_isp_params_vdev *params_vdev)
 	kfree(priv_val);
 	params_vdev->priv_val = NULL;
 }
+

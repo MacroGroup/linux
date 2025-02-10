@@ -1523,3 +1523,4 @@ void rkisp_uninit_stats_vdev_v2x(struct rkisp_isp_stats_vdev *stats_vdev)
 	for (i = 0; i < RKISP_STATS_DDR_BUF_NUM; i++)
 		rkisp_free_buffer(stats_vdev->dev, &stats_vdev->stats_buf[i]);
 }
+

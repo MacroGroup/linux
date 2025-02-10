@@ -545,3 +545,4 @@ void rkisp_unregister_params_vdev(struct rkisp_isp_params_vdev *params_vdev)
 	vb2_queue_release(vdev->queue);
 	rkisp_uninit_params_vdev(params_vdev);
 }
+

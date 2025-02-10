@@ -1099,4 +1099,5 @@ void rkisp_init_stats_vdev_v32(struct rkisp_isp_stats_vdev *stats_vdev)
 
 void rkisp_uninit_stats_vdev_v32(struct rkisp_isp_stats_vdev *stats_vdev)
 {
+
 }

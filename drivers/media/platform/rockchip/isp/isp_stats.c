@@ -426,3 +426,4 @@ void rkisp_unregister_stats_vdev(struct rkisp_isp_stats_vdev *stats_vdev)
 	vb2_queue_release(vdev->queue);
 	rkisp_uninit_stats_vdev(stats_vdev);
 }
+

@@ -252,7 +252,7 @@ err:
 }
 
 void rkisp_free_buffer(struct rkisp_device *dev,
-		       struct rkisp_dummy_buffer *buf)
+			struct rkisp_dummy_buffer *buf)
 {
 	const struct vb2_mem_ops *g_ops = dev->hw_dev->mem_ops;
 

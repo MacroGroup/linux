@@ -4070,3 +4070,4 @@ irqreturn_t rkisp_vs_isr_handler(int irq, void *ctx)
 
 	return IRQ_HANDLED;
 }
+

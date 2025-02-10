@@ -2235,8 +2235,8 @@ void rkisp_unregister_stream_v32(struct rkisp_device *dev)
 	stream = &cap_dev->stream[RKISP_STREAM_MP];
 	rkisp_unregister_stream_vdev(stream);
 	stream = &cap_dev->stream[RKISP_STREAM_SP];
-	rkisp_unregister_stream_vdev(stream);
 	if (dev->isp_ver == ISP_V32) {
+		rkisp_unregister_stream_vdev(stream);
 		stream = &cap_dev->stream[RKISP_STREAM_BP];
 		rkisp_unregister_stream_vdev(stream);
 		stream = &cap_dev->stream[RKISP_STREAM_MPDS];
