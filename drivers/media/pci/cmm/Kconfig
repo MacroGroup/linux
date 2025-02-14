@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config CMM_DIASOM
+	tristate "CMM drivers of diasom"
+	depends on PCI
+	help
+	  Enables cmm device driver
+	  Say Y here if you have this hardware.
+	  In doubt, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called cmm.
