@@ -334,14 +334,6 @@ DEFINE_ASAN_SET_SHADOW(f3);
 DEFINE_ASAN_SET_SHADOW(f5);
 DEFINE_ASAN_SET_SHADOW(f8);
 
-/* Only allow cache merging when no per-object metadata is present. */
-slab_flags_t kasan_never_merge(void)
-{
-	if (!kasan_requires_meta())
-		return 0;
-	return SLAB_KASAN;
-}
-
 /*
  * Adaptive redzone policy taken from the userspace AddressSanitizer runtime.
  * For larger allocations larger redzones are used.
@@ -370,15 +362,13 @@ void kasan_cache_create(struct kmem_cache *cache, unsigned int *size,
 		return;
 
 	/*
-	 * SLAB_KASAN is used to mark caches that are sanitized by KASAN
-	 * and that thus have per-object metadata.
-	 * Currently this flag is used in two places:
-	 * 1. In slab_ksize() to account for per-object metadata when
-	 *    calculating the size of the accessible memory within the object.
-	 * 2. In slab_common.c via kasan_never_merge() to prevent merging of
-	 *    caches with per-object metadata.
+	 * SLAB_KASAN is used to mark caches that are sanitized by KASAN and
+	 * that thus have per-object metadata. Currently, this flag is used in
+	 * slab_ksize() to account for per-object metadata when calculating the
+	 * size of the accessible memory within the object. Additionally, we use
+	 * SLAB_NO_MERGE to prevent merging of caches with per-object metadata.
 	 */
-	*flags |= SLAB_KASAN;
+	*flags |= SLAB_KASAN | SLAB_NO_MERGE;
 
 	ok_size = *size;
 
@@ -402,9 +392,12 @@ void kasan_cache_create(struct kmem_cache *cache, unsigned int *size,
 	 * 1. Object is SLAB_TYPESAFE_BY_RCU, which means that it can
 	 *    be touched after it was freed, or
 	 * 2. Object has a constructor, which means it's expected to
-	 *    retain its content until the next allocation.
+	 *    retain its content until the next allocation, or
+	 * 3. It is from a kmalloc cache which enables the debug option
+	 *    to store original size.
 	 */
-	if ((cache->flags & SLAB_TYPESAFE_BY_RCU) || cache->ctor) {
+	if ((cache->flags & SLAB_TYPESAFE_BY_RCU) || cache->ctor ||
+	     slub_debug_orig_size(cache)) {
 		cache->kasan_info.free_meta_offset = *size;
 		*size += sizeof(struct kasan_free_meta);
 		goto free_meta_added;

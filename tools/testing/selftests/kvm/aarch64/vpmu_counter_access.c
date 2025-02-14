@@ -93,22 +93,6 @@ static inline void write_sel_evtyper(int sel, unsigned long val)
 	isb();
 }
 
-static inline void enable_counter(int idx)
-{
-	uint64_t v = read_sysreg(pmcntenset_el0);
-
-	write_sysreg(BIT(idx) | v, pmcntenset_el0);
-	isb();
-}
-
-static inline void disable_counter(int idx)
-{
-	uint64_t v = read_sysreg(pmcntenset_el0);
-
-	write_sysreg(BIT(idx) | v, pmcntenclr_el0);
-	isb();
-}
-
 static void pmu_disable_reset(void)
 {
 	uint64_t pmcr = read_sysreg(pmcr_el0);
@@ -195,11 +179,11 @@ struct pmc_accessor pmc_accessors[] = {
 										 \
 	if (set_expected)							 \
 		__GUEST_ASSERT((_tval & mask),					 \
-				"tval: 0x%lx; mask: 0x%lx; set_expected: 0x%lx", \
+				"tval: 0x%lx; mask: 0x%lx; set_expected: %u",	 \
 				_tval, mask, set_expected);			 \
 	else									 \
 		__GUEST_ASSERT(!(_tval & mask),					 \
-				"tval: 0x%lx; mask: 0x%lx; set_expected: 0x%lx", \
+				"tval: 0x%lx; mask: 0x%lx; set_expected: %u",	 \
 				_tval, mask, set_expected);			 \
 }
 
@@ -286,7 +270,7 @@ static void test_access_pmc_regs(struct pmc_accessor *acc, int pmc_idx)
 	acc->write_typer(pmc_idx, write_data);
 	read_data = acc->read_typer(pmc_idx);
 	__GUEST_ASSERT(read_data == write_data,
-		       "pmc_idx: 0x%lx; acc_idx: 0x%lx; read_data: 0x%lx; write_data: 0x%lx",
+		       "pmc_idx: 0x%x; acc_idx: 0x%lx; read_data: 0x%lx; write_data: 0x%lx",
 		       pmc_idx, PMC_ACC_TO_IDX(acc), read_data, write_data);
 
 	/*
@@ -297,14 +281,14 @@ static void test_access_pmc_regs(struct pmc_accessor *acc, int pmc_idx)
 
 	/* The count value must be 0, as it is disabled and reset */
 	__GUEST_ASSERT(read_data == 0,
-		       "pmc_idx: 0x%lx; acc_idx: 0x%lx; read_data: 0x%lx",
+		       "pmc_idx: 0x%x; acc_idx: 0x%lx; read_data: 0x%lx",
 		       pmc_idx, PMC_ACC_TO_IDX(acc), read_data);
 
 	write_data = read_data + pmc_idx + 0x12345;
 	acc->write_cntr(pmc_idx, write_data);
 	read_data = acc->read_cntr(pmc_idx);
 	__GUEST_ASSERT(read_data == write_data,
-		       "pmc_idx: 0x%lx; acc_idx: 0x%lx; read_data: 0x%lx; write_data: 0x%lx",
+		       "pmc_idx: 0x%x; acc_idx: 0x%lx; read_data: 0x%lx; write_data: 0x%lx",
 		       pmc_idx, PMC_ACC_TO_IDX(acc), read_data, write_data);
 }
 
@@ -316,7 +300,7 @@ static void guest_sync_handler(struct ex_regs *regs)
 	uint64_t esr, ec;
 
 	esr = read_sysreg(esr_el1);
-	ec = (esr >> ESR_EC_SHIFT) & ESR_EC_MASK;
+	ec = ESR_ELx_EC(esr);
 
 	__GUEST_ASSERT(expected_ec == ec,
 			"PC: 0x%lx; ESR: 0x%lx; EC: 0x%lx; EC expected: 0x%lx",
@@ -354,10 +338,10 @@ static void test_access_invalid_pmc_regs(struct pmc_accessor *acc, int pmc_idx)
 	 * Reading/writing the event count/type registers should cause
 	 * an UNDEFINED exception.
 	 */
-	TEST_EXCEPTION(ESR_EC_UNKNOWN, acc->read_cntr(pmc_idx));
-	TEST_EXCEPTION(ESR_EC_UNKNOWN, acc->write_cntr(pmc_idx, 0));
-	TEST_EXCEPTION(ESR_EC_UNKNOWN, acc->read_typer(pmc_idx));
-	TEST_EXCEPTION(ESR_EC_UNKNOWN, acc->write_typer(pmc_idx, 0));
+	TEST_EXCEPTION(ESR_ELx_EC_UNKNOWN, acc->read_cntr(pmc_idx));
+	TEST_EXCEPTION(ESR_ELx_EC_UNKNOWN, acc->write_cntr(pmc_idx, 0));
+	TEST_EXCEPTION(ESR_ELx_EC_UNKNOWN, acc->read_typer(pmc_idx));
+	TEST_EXCEPTION(ESR_ELx_EC_UNKNOWN, acc->write_typer(pmc_idx, 0));
 	/*
 	 * The bit corresponding to the (unimplemented) counter in
 	 * {PMCNTEN,PMINTEN,PMOVS}{SET,CLR} registers should be RAZ.
@@ -379,7 +363,7 @@ static void guest_code(uint64_t expected_pmcr_n)
 	int i, pmc;
 
 	__GUEST_ASSERT(expected_pmcr_n <= ARMV8_PMU_MAX_GENERAL_COUNTERS,
-			"Expected PMCR.N: 0x%lx; ARMv8 general counters: 0x%lx",
+			"Expected PMCR.N: 0x%lx; ARMv8 general counters: 0x%x",
 			expected_pmcr_n, ARMV8_PMU_MAX_GENERAL_COUNTERS);
 
 	pmcr = read_sysreg(pmcr_el0);
@@ -420,9 +404,6 @@ static void guest_code(uint64_t expected_pmcr_n)
 	GUEST_DONE();
 }
 
-#define GICD_BASE_GPA	0x8000000ULL
-#define GICR_BASE_GPA	0x80A0000ULL
-
 /* Create a VM that has one vCPU with PMUv3 configured. */
 static void create_vpmu_vm(void *guest_code)
 {
@@ -444,7 +425,7 @@ static void create_vpmu_vm(void *guest_code)
 
 	vpmu_vm.vm = vm_create(1);
 	vm_init_descriptor_tables(vpmu_vm.vm);
-	for (ec = 0; ec < ESR_EC_NUM; ec++) {
+	for (ec = 0; ec < ESR_ELx_EC_MAX + 1; ec++) {
 		vm_install_sync_handler(vpmu_vm.vm, VECTOR_SYNC_CURRENT, ec,
 					guest_sync_handler);
 	}
@@ -454,8 +435,7 @@ static void create_vpmu_vm(void *guest_code)
 	init.features[0] |= (1 << KVM_ARM_VCPU_PMU_V3);
 	vpmu_vm.vcpu = aarch64_vcpu_add(vpmu_vm.vm, 0, &init, guest_code);
 	vcpu_init_descriptor_tables(vpmu_vm.vcpu);
-	vpmu_vm.gic_fd = vgic_v3_setup(vpmu_vm.vm, 1, 64,
-					GICD_BASE_GPA, GICR_BASE_GPA);
+	vpmu_vm.gic_fd = vgic_v3_setup(vpmu_vm.vm, 1, 64);
 	__TEST_REQUIRE(vpmu_vm.gic_fd >= 0,
 		       "Failed to create vgic-v3, skipping");
 

@@ -26,10 +26,9 @@
 #ifndef _DC_PLANE_H_
 #define _DC_PLANE_H_
 
-#include "dc.h"
 #include "dc_hw_types.h"
 
-struct dc_plane_state *dc_create_plane_state(struct dc *dc);
+struct dc_plane_state *dc_create_plane_state(const struct dc *dc);
 const struct dc_plane_status *dc_plane_get_status(
 		const struct dc_plane_state *plane_state);
 void dc_plane_state_retain(struct dc_plane_state *plane_state);

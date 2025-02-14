@@ -11,6 +11,8 @@
 #include "guest_modes.h"
 #include "kvm_util.h"
 #include "processor.h"
+#include "ucall_common.h"
+
 #include <linux/bitfield.h>
 #include <linux/sizes.h>
 
@@ -365,8 +367,13 @@ void vcpu_arch_dump(FILE *stream, struct kvm_vcpu *vcpu, uint8_t indent)
 		indent, "", pstate, pc);
 }
 
-struct kvm_vcpu *aarch64_vcpu_add(struct kvm_vm *vm, uint32_t vcpu_id,
-				  struct kvm_vcpu_init *init, void *guest_code)
+void vcpu_arch_set_entry_point(struct kvm_vcpu *vcpu, void *guest_code)
+{
+	vcpu_set_reg(vcpu, ARM64_CORE_REG(regs.pc), (uint64_t)guest_code);
+}
+
+static struct kvm_vcpu *__aarch64_vcpu_add(struct kvm_vm *vm, uint32_t vcpu_id,
+					   struct kvm_vcpu_init *init)
 {
 	size_t stack_size;
 	uint64_t stack_vaddr;
@@ -381,15 +388,22 @@ struct kvm_vcpu *aarch64_vcpu_add(struct kvm_vm *vm, uint32_t vcpu_id,
 	aarch64_vcpu_setup(vcpu, init);
 
 	vcpu_set_reg(vcpu, ARM64_CORE_REG(sp_el1), stack_vaddr + stack_size);
-	vcpu_set_reg(vcpu, ARM64_CORE_REG(regs.pc), (uint64_t)guest_code);
+	return vcpu;
+}
+
+struct kvm_vcpu *aarch64_vcpu_add(struct kvm_vm *vm, uint32_t vcpu_id,
+				  struct kvm_vcpu_init *init, void *guest_code)
+{
+	struct kvm_vcpu *vcpu = __aarch64_vcpu_add(vm, vcpu_id, init);
+
+	vcpu_arch_set_entry_point(vcpu, guest_code);
 
 	return vcpu;
 }
 
-struct kvm_vcpu *vm_arch_vcpu_add(struct kvm_vm *vm, uint32_t vcpu_id,
-				  void *guest_code)
+struct kvm_vcpu *vm_arch_vcpu_add(struct kvm_vm *vm, uint32_t vcpu_id)
 {
-	return aarch64_vcpu_add(vm, vcpu_id, NULL, guest_code);
+	return __aarch64_vcpu_add(vm, vcpu_id, NULL);
 }
 
 void vcpu_args_set(struct kvm_vcpu *vcpu, unsigned int num, ...)
@@ -436,7 +450,7 @@ void assert_on_unhandled_exception(struct kvm_vcpu *vcpu)
 }
 
 struct handlers {
-	handler_fn exception_handlers[VECTOR_NUM][ESR_EC_NUM];
+	handler_fn exception_handlers[VECTOR_NUM][ESR_ELx_EC_MAX + 1];
 };
 
 void vcpu_init_descriptor_tables(struct kvm_vcpu *vcpu)
@@ -455,7 +469,7 @@ void route_exception(struct ex_regs *regs, int vector)
 	switch (vector) {
 	case VECTOR_SYNC_CURRENT:
 	case VECTOR_SYNC_LOWER_64:
-		ec = (read_sysreg(esr_el1) >> ESR_EC_SHIFT) & ESR_EC_MASK;
+		ec = ESR_ELx_EC(read_sysreg(esr_el1));
 		valid_ec = true;
 		break;
 	case VECTOR_IRQ_CURRENT:
@@ -494,7 +508,7 @@ void vm_install_sync_handler(struct kvm_vm *vm, int vector, int ec,
 
 	assert(VECTOR_IS_SYNC(vector));
 	assert(vector < VECTOR_NUM);
-	assert(ec < ESR_EC_NUM);
+	assert(ec <= ESR_ELx_EC_MAX);
 	handlers->exception_handlers[vector][ec] = handler;
 }
 
@@ -624,4 +638,10 @@ void vm_vaddr_populate_bitmap(struct kvm_vm *vm)
 	 */
 	sparsebit_set_num(vm->vpages_valid, 0,
 			  (1ULL << vm->va_bits) >> vm->page_shift);
+}
+
+/* Helper to call wfi instruction. */
+void wfi(void)
+{
+	asm volatile("wfi");
 }

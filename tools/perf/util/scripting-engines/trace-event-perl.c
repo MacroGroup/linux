@@ -27,7 +27,7 @@
 #include <errno.h>
 #include <linux/bitmap.h>
 #include <linux/time64.h>
-#include <traceevent/event-parse.h>
+#include <event-parse.h>
 
 #include <stdbool.h>
 /* perl needs the following define, right after including stdbool.h */
@@ -320,10 +320,10 @@ static SV *perl_process_callchain(struct perf_sample *sample,
 			const char *dsoname = "[unknown]";
 
 			if (dso) {
-				if (symbol_conf.show_kernel_path && dso->long_name)
-					dsoname = dso->long_name;
+				if (symbol_conf.show_kernel_path && dso__long_name(dso))
+					dsoname = dso__long_name(dso);
 				else
-					dsoname = dso->name;
+					dsoname = dso__name(dso);
 			}
 			if (!hv_stores(elem, "dso", newSVpv(dsoname,0))) {
 				hv_undef(elem);

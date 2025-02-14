@@ -682,7 +682,6 @@ static const struct dc_plane_cap plane_cap = {
 static const struct dc_debug_options debug_defaults_drv = {
 	.disable_dmcu = true,
 	.force_abm_enable = false,
-	.timing_trace = false,
 	.clock_trace = true,
 	.disable_dpp_power_gate = false,
 	.disable_hubp_power_gate = false,
@@ -702,6 +701,7 @@ static const struct dc_debug_options debug_defaults_drv = {
 	.dmub_command_table = true,
 	.use_max_lb = false,
 	.exit_idle_opt_for_cursor_updates = true,
+	.enable_legacy_fast_update = true,
 	.using_dml2 = false,
 };
 
@@ -882,7 +882,7 @@ static struct link_encoder *dcn301_link_encoder_create(
 	struct dcn20_link_encoder *enc20 =
 		kzalloc(sizeof(struct dcn20_link_encoder), GFP_KERNEL);
 
-	if (!enc20)
+	if (!enc20 || enc_init_data->hpd_source >= ARRAY_SIZE(link_enc_hpd_regs))
 		return NULL;
 
 	dcn301_link_encoder_construct(enc20,
@@ -1363,14 +1363,21 @@ static void set_wm_ranges(
 	pp_smu->nv_funcs.set_wm_ranges(&pp_smu->nv_funcs.pp_smu, &ranges);
 }
 
-static void dcn301_calculate_wm_and_dlg(
-		struct dc *dc, struct dc_state *context,
-		display_e2e_pipe_params_st *pipes,
-		int pipe_cnt,
-		int vlevel)
+static void dcn301_update_bw_bounding_box(struct dc *dc, struct clk_bw_params *bw_params)
 {
 	DC_FP_START();
-	dcn301_calculate_wm_and_dlg_fp(dc, context, pipes, pipe_cnt, vlevel);
+	dcn301_fpu_update_bw_bounding_box(dc, bw_params);
+	DC_FP_END();
+}
+
+static void dcn301_calculate_wm_and_dlg(struct dc *dc,
+					struct dc_state *context,
+					display_e2e_pipe_params_st *pipes,
+					int pipe_cnt,
+					int vlevel_req)
+{
+	DC_FP_START();
+	dcn301_fpu_calculate_wm_and_dlg(dc, context, pipes, pipe_cnt, vlevel_req);
 	DC_FP_END();
 }
 

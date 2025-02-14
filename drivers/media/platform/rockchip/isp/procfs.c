@@ -1064,14 +1064,14 @@ static ssize_t rkisp_proc_write(struct file *file,
 				size_t user_len, loff_t *pos)
 {
 	struct rkisp_device *dev = pde_data(file_inode(file));
-	char *tmp, *buf = vmalloc(user_len + 1);
+	char *tmp, *buf = kvmalloc(user_len + 1, GFP_KERNEL);
 	u32 val, reg;
 	int ret;
 
 	if (!buf)
 		return -ENOMEM;
 	if (copy_from_user(buf, user_buf, user_len) != 0) {
-		vfree(buf);
+		kvfree(buf);
 		return -EFAULT;
 	}
 	if (buf[user_len - 1] == '\n')
@@ -1117,7 +1117,7 @@ static ssize_t rkisp_proc_write(struct file *file,
 		}
 	}
 end:
-	vfree(buf);
+	kvfree(buf);
 	return user_len;
 }
 

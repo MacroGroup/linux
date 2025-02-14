@@ -100,18 +100,6 @@ void rkisp_set_clk_rate(struct clk *clk, unsigned long rate)
 	clk_set_rate(clk, rate);
 }
 
-static int __maybe_unused __rkisp_clr_unready_dev(void)
-{
-	struct rkisp_device *isp_dev;
-
-	mutex_lock(&rkisp_dev_mutex);
-	list_for_each_entry(isp_dev, &rkisp_device_list, list)
-		v4l2_async_notifier_clr_unready_dev(&isp_dev->notifier);
-	mutex_unlock(&rkisp_dev_mutex);
-
-	return 0;
-}
-
 /**************************** pipeline operations *****************************/
 
 static int __isp_pipeline_prepare(struct rkisp_pipeline *p,
@@ -918,7 +906,7 @@ err_unreg_v4l2_dev:
 	return ret;
 }
 
-static int rkisp_plat_remove(struct platform_device *pdev)
+static void rkisp_plat_remove(struct platform_device *pdev)
 {
 	struct rkisp_device *isp_dev = platform_get_drvdata(pdev);
 
@@ -942,7 +930,6 @@ static int rkisp_plat_remove(struct platform_device *pdev)
 	rkisp_unregister_csi_subdev(isp_dev);
 	rkisp_unregister_isp_subdev(isp_dev);
 	media_device_cleanup(&isp_dev->media_dev);
-	return 0;
 }
 
 static int __maybe_unused rkisp_runtime_suspend(struct device *dev)
@@ -966,6 +953,8 @@ static int __maybe_unused rkisp_runtime_resume(struct device *dev)
 	    rkisp_update_sensor_info(isp_dev) >= 0)
 		_set_pipeline_default_fmt(isp_dev, false);
 
+	if (isp_dev->hw_dev->is_assigned_clk)
+		rkisp_clk_dbg = true;
 	isp_dev->cap_dev.wait_line = rkisp_wait_line;
 	isp_dev->cap_dev.wrap_line = rkisp_wrap_line;
 	isp_dev->is_rdbk_auto = rkisp_rdbk_auto;
@@ -974,16 +963,6 @@ static int __maybe_unused rkisp_runtime_resume(struct device *dev)
 	mutex_unlock(&isp_dev->hw_dev->dev_lock);
 	return (ret > 0) ? 0 : ret;
 }
-
-#ifndef MODULE
-static int __init rkisp_clr_unready_dev(void)
-{
-	__rkisp_clr_unready_dev();
-
-	return 0;
-}
-late_initcall_sync(rkisp_clr_unready_dev);
-#endif
 
 static const struct dev_pm_ops rkisp_plat_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend,
@@ -1013,4 +992,4 @@ struct platform_driver rkisp_plat_drv = {
 MODULE_AUTHOR("Rockchip Camera/ISP team");
 MODULE_DESCRIPTION("Rockchip ISP platform driver");
 MODULE_LICENSE("Dual BSD/GPL");
-MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
+MODULE_IMPORT_NS("VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver");

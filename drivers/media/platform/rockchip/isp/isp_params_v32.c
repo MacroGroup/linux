@@ -5382,7 +5382,7 @@ int rkisp_init_params_vdev_v32(struct rkisp_isp_params_vdev *params_vdev)
 		return -ENOMEM;
 
 	size = sizeof(struct isp32_isp_params_cfg);
-	params_vdev->isp32_params = vmalloc(size);
+	params_vdev->isp32_params = kvmalloc(size, GFP_KERNEL);
 	if (!params_vdev->isp32_params) {
 		kfree(priv_val);
 		return -ENOMEM;
@@ -5406,7 +5406,7 @@ void rkisp_uninit_params_vdev_v32(struct rkisp_isp_params_vdev *params_vdev)
 	struct rkisp_isp_params_val_v32 *priv_val = params_vdev->priv_val;
 
 	if (params_vdev->isp32_params)
-		vfree(params_vdev->isp32_params);
+		kvfree(params_vdev->isp32_params);
 	if (priv_val) {
 		tasklet_kill(&priv_val->lsc_tasklet);
 		kfree(priv_val);

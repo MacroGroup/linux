@@ -206,8 +206,7 @@ void get_timer_map(struct kvm_vcpu *vcpu, struct timer_map *map)
 
 static inline bool userspace_irqchip(struct kvm *kvm)
 {
-	return static_branch_unlikely(&userspace_irqchip_in_use) &&
-		unlikely(!irqchip_in_kernel(kvm));
+	return unlikely(!irqchip_in_kernel(kvm));
 }
 
 static void soft_timer_start(struct hrtimer *hrt, u64 ns)
@@ -745,7 +744,7 @@ static void kvm_timer_vcpu_load_nested_switch(struct kvm_vcpu *vcpu,
 		WARN_ON_ONCE(ret);
 
 		/*
-		 * The virtual offset behaviour is "interresting", as it
+		 * The virtual offset behaviour is "interesting", as it
 		 * always applies when HCR_EL2.E2H==0, but only when
 		 * accessed from EL1 when HCR_EL2.E2H==1. So make sure we
 		 * track E2H when putting the HV timer in "direct" mode.

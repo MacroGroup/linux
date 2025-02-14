@@ -41,7 +41,8 @@
  *   nlmsg_get_pos()			return current position in message
  *   nlmsg_trim()			trim part of message
  *   nlmsg_cancel()			cancel message construction
- *   nlmsg_free()			free a netlink message
+ *   nlmsg_consume()			free a netlink message (expected)
+ *   nlmsg_free()			free a netlink message (drop)
  *
  * Message Sending:
  *   nlmsg_multicast()			multicast message to several groups
@@ -141,6 +142,8 @@
  *   nla_get_flag(nla)			return 1 if flag is true
  *   nla_get_msecs(nla)			get payload for a msecs attribute
  *
+ *   The same functions also exist with _default().
+ *
  * Attribute Misc:
  *   nla_memcpy(dest, nla, count)	copy attribute into memory
  *   nla_memcmp(nla, data, size)	compare attribute with memory area
@@ -157,7 +160,11 @@
  *   nla_parse()			parse and validate stream of attrs
  *   nla_parse_nested()			parse nested attributes
  *   nla_for_each_attr()		loop over all attributes
+ *   nla_for_each_attr_type()		loop over all attributes with the
+ *					given type
  *   nla_for_each_nested()		loop over the nested attributes
+ *   nla_for_each_nested_type()		loop over the nested attributes with
+ *					the given type
  *=========================================================================
  */
 
@@ -464,6 +471,7 @@ struct nla_policy {
 	.max = _len						\
 }
 #define NLA_POLICY_MIN_LEN(_len)	NLA_POLICY_MIN(NLA_BINARY, _len)
+#define NLA_POLICY_MAX_LEN(_len)	NLA_POLICY_MAX(NLA_BINARY, _len)
 
 /**
  * struct nl_info - netlink source information
@@ -822,7 +830,7 @@ nlmsg_parse_deprecated_strict(const struct nlmsghdr *nlh, int hdrlen,
 /**
  * nlmsg_find_attr - find a specific attribute in a netlink message
  * @nlh: netlink message header
- * @hdrlen: length of familiy specific header
+ * @hdrlen: length of family specific header
  * @attrtype: type of attribute to look for
  *
  * Returns the first attribute which matches the specified type.
@@ -844,7 +852,7 @@ static inline struct nlattr *nlmsg_find_attr(const struct nlmsghdr *nlh,
  *
  * Validates all attributes in the specified attribute stream against the
  * specified policy. Validation is done in liberal mode.
- * See documenation of struct nla_policy for more details.
+ * See documentation of struct nla_policy for more details.
  *
  * Returns 0 on success or a negative error code.
  */
@@ -867,7 +875,7 @@ static inline int nla_validate_deprecated(const struct nlattr *head, int len,
  *
  * Validates all attributes in the specified attribute stream against the
  * specified policy. Validation is done in strict mode.
- * See documenation of struct nla_policy for more details.
+ * See documentation of struct nla_policy for more details.
  *
  * Returns 0 on success or a negative error code.
  */
@@ -882,7 +890,7 @@ static inline int nla_validate(const struct nlattr *head, int len, int maxtype,
 /**
  * nlmsg_validate_deprecated - validate a netlink message including attributes
  * @nlh: netlinket message header
- * @hdrlen: length of familiy specific header
+ * @hdrlen: length of family specific header
  * @maxtype: maximum attribute type to be expected
  * @policy: validation policy
  * @extack: extended ACK report struct
@@ -928,7 +936,7 @@ static inline u32 nlmsg_seq(const struct nlmsghdr *nlh)
  * nlmsg_for_each_attr - iterate over a stream of attributes
  * @pos: loop counter, set to current attribute
  * @nlh: netlink message header
- * @hdrlen: length of familiy specific header
+ * @hdrlen: length of family specific header
  * @rem: initialized to len, holds bytes currently remaining in stream
  */
 #define nlmsg_for_each_attr(pos, nlh, hdrlen, rem) \
@@ -1029,7 +1037,7 @@ static inline struct sk_buff *nlmsg_new_large(size_t payload)
  * @skb: socket buffer the message is stored in
  * @nlh: netlink message header
  *
- * Corrects the netlink message header to include the appeneded
+ * Corrects the netlink message header to include the appended
  * attributes. Only necessary if attributes have been added to
  * the message.
  */
@@ -1078,12 +1086,21 @@ static inline void nlmsg_cancel(struct sk_buff *skb, struct nlmsghdr *nlh)
 }
 
 /**
- * nlmsg_free - free a netlink message
+ * nlmsg_free - drop a netlink message
  * @skb: socket buffer of netlink message
  */
 static inline void nlmsg_free(struct sk_buff *skb)
 {
 	kfree_skb(skb);
+}
+
+/**
+ * nlmsg_consume - free a netlink message
+ * @skb: socket buffer of netlink message
+ */
+static inline void nlmsg_consume(struct sk_buff *skb)
+{
+	consume_skb(skb);
 }
 
 /**
@@ -1681,12 +1698,41 @@ static inline u32 nla_get_u32(const struct nlattr *nla)
 }
 
 /**
+ * nla_get_u32_default - return payload of u32 attribute or default
+ * @nla: u32 netlink attribute, may be %NULL
+ * @defvalue: default value to use if @nla is %NULL
+ *
+ * Return: the value of the attribute, or the default value if not present
+ */
+static inline u32 nla_get_u32_default(const struct nlattr *nla, u32 defvalue)
+{
+	if (!nla)
+		return defvalue;
+	return nla_get_u32(nla);
+}
+
+/**
  * nla_get_be32 - return payload of __be32 attribute
  * @nla: __be32 netlink attribute
  */
 static inline __be32 nla_get_be32(const struct nlattr *nla)
 {
 	return *(__be32 *) nla_data(nla);
+}
+
+/**
+ * nla_get_be32_default - return payload of be32 attribute or default
+ * @nla: __be32 netlink attribute, may be %NULL
+ * @defvalue: default value to use if @nla is %NULL
+ *
+ * Return: the value of the attribute, or the default value if not present
+ */
+static inline __be32 nla_get_be32_default(const struct nlattr *nla,
+					  __be32 defvalue)
+{
+	if (!nla)
+		return defvalue;
+	return nla_get_be32(nla);
 }
 
 /**
@@ -1699,12 +1745,41 @@ static inline __le32 nla_get_le32(const struct nlattr *nla)
 }
 
 /**
+ * nla_get_le32_default - return payload of le32 attribute or default
+ * @nla: __le32 netlink attribute, may be %NULL
+ * @defvalue: default value to use if @nla is %NULL
+ *
+ * Return: the value of the attribute, or the default value if not present
+ */
+static inline __le32 nla_get_le32_default(const struct nlattr *nla,
+					  __le32 defvalue)
+{
+	if (!nla)
+		return defvalue;
+	return nla_get_le32(nla);
+}
+
+/**
  * nla_get_u16 - return payload of u16 attribute
  * @nla: u16 netlink attribute
  */
 static inline u16 nla_get_u16(const struct nlattr *nla)
 {
 	return *(u16 *) nla_data(nla);
+}
+
+/**
+ * nla_get_u16_default - return payload of u16 attribute or default
+ * @nla: u16 netlink attribute, may be %NULL
+ * @defvalue: default value to use if @nla is %NULL
+ *
+ * Return: the value of the attribute, or the default value if not present
+ */
+static inline u16 nla_get_u16_default(const struct nlattr *nla, u16 defvalue)
+{
+	if (!nla)
+		return defvalue;
+	return nla_get_u16(nla);
 }
 
 /**
@@ -1717,6 +1792,21 @@ static inline __be16 nla_get_be16(const struct nlattr *nla)
 }
 
 /**
+ * nla_get_be16_default - return payload of be16 attribute or default
+ * @nla: __be16 netlink attribute, may be %NULL
+ * @defvalue: default value to use if @nla is %NULL
+ *
+ * Return: the value of the attribute, or the default value if not present
+ */
+static inline __be16 nla_get_be16_default(const struct nlattr *nla,
+					  __be16 defvalue)
+{
+	if (!nla)
+		return defvalue;
+	return nla_get_be16(nla);
+}
+
+/**
  * nla_get_le16 - return payload of __le16 attribute
  * @nla: __le16 netlink attribute
  */
@@ -1726,12 +1816,41 @@ static inline __le16 nla_get_le16(const struct nlattr *nla)
 }
 
 /**
+ * nla_get_le16_default - return payload of le16 attribute or default
+ * @nla: __le16 netlink attribute, may be %NULL
+ * @defvalue: default value to use if @nla is %NULL
+ *
+ * Return: the value of the attribute, or the default value if not present
+ */
+static inline __le16 nla_get_le16_default(const struct nlattr *nla,
+					  __le16 defvalue)
+{
+	if (!nla)
+		return defvalue;
+	return nla_get_le16(nla);
+}
+
+/**
  * nla_get_u8 - return payload of u8 attribute
  * @nla: u8 netlink attribute
  */
 static inline u8 nla_get_u8(const struct nlattr *nla)
 {
 	return *(u8 *) nla_data(nla);
+}
+
+/**
+ * nla_get_u8_default - return payload of u8 attribute or default
+ * @nla: u8 netlink attribute, may be %NULL
+ * @defvalue: default value to use if @nla is %NULL
+ *
+ * Return: the value of the attribute, or the default value if not present
+ */
+static inline u8 nla_get_u8_default(const struct nlattr *nla, u8 defvalue)
+{
+	if (!nla)
+		return defvalue;
+	return nla_get_u8(nla);
 }
 
 /**
@@ -1748,6 +1867,20 @@ static inline u64 nla_get_u64(const struct nlattr *nla)
 }
 
 /**
+ * nla_get_u64_default - return payload of u64 attribute or default
+ * @nla: u64 netlink attribute, may be %NULL
+ * @defvalue: default value to use if @nla is %NULL
+ *
+ * Return: the value of the attribute, or the default value if not present
+ */
+static inline u64 nla_get_u64_default(const struct nlattr *nla, u64 defvalue)
+{
+	if (!nla)
+		return defvalue;
+	return nla_get_u64(nla);
+}
+
+/**
  * nla_get_uint - return payload of uint attribute
  * @nla: uint netlink attribute
  */
@@ -1756,6 +1889,20 @@ static inline u64 nla_get_uint(const struct nlattr *nla)
 	if (nla_len(nla) == sizeof(u32))
 		return nla_get_u32(nla);
 	return nla_get_u64(nla);
+}
+
+/**
+ * nla_get_uint_default - return payload of uint attribute or default
+ * @nla: uint netlink attribute, may be %NULL
+ * @defvalue: default value to use if @nla is %NULL
+ *
+ * Return: the value of the attribute, or the default value if not present
+ */
+static inline u64 nla_get_uint_default(const struct nlattr *nla, u64 defvalue)
+{
+	if (!nla)
+		return defvalue;
+	return nla_get_uint(nla);
 }
 
 /**
@@ -1772,12 +1919,42 @@ static inline __be64 nla_get_be64(const struct nlattr *nla)
 }
 
 /**
+ * nla_get_be64_default - return payload of be64 attribute or default
+ * @nla: __be64 netlink attribute, may be %NULL
+ * @defvalue: default value to use if @nla is %NULL
+ *
+ * Return: the value of the attribute, or the default value if not present
+ */
+static inline __be64 nla_get_be64_default(const struct nlattr *nla,
+					  __be64 defvalue)
+{
+	if (!nla)
+		return defvalue;
+	return nla_get_be64(nla);
+}
+
+/**
  * nla_get_le64 - return payload of __le64 attribute
  * @nla: __le64 netlink attribute
  */
 static inline __le64 nla_get_le64(const struct nlattr *nla)
 {
 	return *(__le64 *) nla_data(nla);
+}
+
+/**
+ * nla_get_le64_default - return payload of le64 attribute or default
+ * @nla: __le64 netlink attribute, may be %NULL
+ * @defvalue: default value to use if @nla is %NULL
+ *
+ * Return: the value of the attribute, or the default value if not present
+ */
+static inline __le64 nla_get_le64_default(const struct nlattr *nla,
+					  __le64 defvalue)
+{
+	if (!nla)
+		return defvalue;
+	return nla_get_le64(nla);
 }
 
 /**
@@ -1790,6 +1967,20 @@ static inline s32 nla_get_s32(const struct nlattr *nla)
 }
 
 /**
+ * nla_get_s32_default - return payload of s32 attribute or default
+ * @nla: s32 netlink attribute, may be %NULL
+ * @defvalue: default value to use if @nla is %NULL
+ *
+ * Return: the value of the attribute, or the default value if not present
+ */
+static inline s32 nla_get_s32_default(const struct nlattr *nla, s32 defvalue)
+{
+	if (!nla)
+		return defvalue;
+	return nla_get_s32(nla);
+}
+
+/**
  * nla_get_s16 - return payload of s16 attribute
  * @nla: s16 netlink attribute
  */
@@ -1799,12 +1990,40 @@ static inline s16 nla_get_s16(const struct nlattr *nla)
 }
 
 /**
+ * nla_get_s16_default - return payload of s16 attribute or default
+ * @nla: s16 netlink attribute, may be %NULL
+ * @defvalue: default value to use if @nla is %NULL
+ *
+ * Return: the value of the attribute, or the default value if not present
+ */
+static inline s16 nla_get_s16_default(const struct nlattr *nla, s16 defvalue)
+{
+	if (!nla)
+		return defvalue;
+	return nla_get_s16(nla);
+}
+
+/**
  * nla_get_s8 - return payload of s8 attribute
  * @nla: s8 netlink attribute
  */
 static inline s8 nla_get_s8(const struct nlattr *nla)
 {
 	return *(s8 *) nla_data(nla);
+}
+
+/**
+ * nla_get_s8_default - return payload of s8 attribute or default
+ * @nla: s8 netlink attribute, may be %NULL
+ * @defvalue: default value to use if @nla is %NULL
+ *
+ * Return: the value of the attribute, or the default value if not present
+ */
+static inline s8 nla_get_s8_default(const struct nlattr *nla, s8 defvalue)
+{
+	if (!nla)
+		return defvalue;
+	return nla_get_s8(nla);
 }
 
 /**
@@ -1821,6 +2040,20 @@ static inline s64 nla_get_s64(const struct nlattr *nla)
 }
 
 /**
+ * nla_get_s64_default - return payload of s64 attribute or default
+ * @nla: s64 netlink attribute, may be %NULL
+ * @defvalue: default value to use if @nla is %NULL
+ *
+ * Return: the value of the attribute, or the default value if not present
+ */
+static inline s64 nla_get_s64_default(const struct nlattr *nla, s64 defvalue)
+{
+	if (!nla)
+		return defvalue;
+	return nla_get_s64(nla);
+}
+
+/**
  * nla_get_sint - return payload of uint attribute
  * @nla: uint netlink attribute
  */
@@ -1829,6 +2062,20 @@ static inline s64 nla_get_sint(const struct nlattr *nla)
 	if (nla_len(nla) == sizeof(s32))
 		return nla_get_s32(nla);
 	return nla_get_s64(nla);
+}
+
+/**
+ * nla_get_sint_default - return payload of sint attribute or default
+ * @nla: sint netlink attribute, may be %NULL
+ * @defvalue: default value to use if @nla is %NULL
+ *
+ * Return: the value of the attribute, or the default value if not present
+ */
+static inline s64 nla_get_sint_default(const struct nlattr *nla, s64 defvalue)
+{
+	if (!nla)
+		return defvalue;
+	return nla_get_sint(nla);
 }
 
 /**
@@ -1854,12 +2101,42 @@ static inline unsigned long nla_get_msecs(const struct nlattr *nla)
 }
 
 /**
+ * nla_get_msecs_default - return payload of msecs attribute or default
+ * @nla: msecs netlink attribute, may be %NULL
+ * @defvalue: default value to use if @nla is %NULL
+ *
+ * Return: the value of the attribute, or the default value if not present
+ */
+static inline unsigned long nla_get_msecs_default(const struct nlattr *nla,
+						  unsigned long defvalue)
+{
+	if (!nla)
+		return defvalue;
+	return nla_get_msecs(nla);
+}
+
+/**
  * nla_get_in_addr - return payload of IPv4 address attribute
  * @nla: IPv4 address netlink attribute
  */
 static inline __be32 nla_get_in_addr(const struct nlattr *nla)
 {
 	return *(__be32 *) nla_data(nla);
+}
+
+/**
+ * nla_get_in_addr_default - return payload of be32 attribute or default
+ * @nla: IPv4 address netlink attribute, may be %NULL
+ * @defvalue: default value to use if @nla is %NULL
+ *
+ * Return: the value of the attribute, or the default value if not present
+ */
+static inline __be32 nla_get_in_addr_default(const struct nlattr *nla,
+					     __be32 defvalue)
+{
+	if (!nla)
+		return defvalue;
+	return nla_get_in_addr(nla);
 }
 
 /**
@@ -1891,10 +2168,11 @@ static inline struct nla_bitfield32 nla_get_bitfield32(const struct nlattr *nla)
  * @src: netlink attribute to duplicate from
  * @gfp: GFP mask
  */
-static inline void *nla_memdup(const struct nlattr *src, gfp_t gfp)
+static inline void *nla_memdup_noprof(const struct nlattr *src, gfp_t gfp)
 {
-	return kmemdup(nla_data(src), nla_len(src), gfp);
+	return kmemdup_noprof(nla_data(src), nla_len(src), gfp);
 }
+#define nla_memdup(...)	alloc_hooks(nla_memdup_noprof(__VA_ARGS__))
 
 /**
  * nla_nest_start_noflag - Start a new level of nested attributes
@@ -1939,7 +2217,7 @@ static inline struct nlattr *nla_nest_start(struct sk_buff *skb, int attrtype)
  * @start: container attribute
  *
  * Corrects the container attribute header to include the all
- * appeneded attributes.
+ * appended attributes.
  *
  * Returns the total data length of the skb.
  */
@@ -1972,7 +2250,7 @@ static inline void nla_nest_cancel(struct sk_buff *skb, struct nlattr *start)
  *
  * Validates all attributes in the nested attribute stream against the
  * specified policy. Attributes with a type exceeding maxtype will be
- * ignored. See documenation of struct nla_policy for more details.
+ * ignored. See documentation of struct nla_policy for more details.
  *
  * Returns 0 on success or a negative error code.
  */
@@ -2071,6 +2349,18 @@ static inline int nla_total_size_64bit(int payload)
 	     pos = nla_next(pos, &(rem)))
 
 /**
+ * nla_for_each_attr_type - iterate over a stream of attributes
+ * @pos: loop counter, set to current attribute
+ * @type: required attribute type for @pos
+ * @head: head of attribute stream
+ * @len: length of attribute stream
+ * @rem: initialized to len, holds bytes currently remaining in stream
+ */
+#define nla_for_each_attr_type(pos, type, head, len, rem) \
+	nla_for_each_attr(pos, head, len, rem) \
+		if (nla_type(pos) == type)
+
+/**
  * nla_for_each_nested - iterate over nested attributes
  * @pos: loop counter, set to current attribute
  * @nla: attribute containing the nested attributes
@@ -2078,6 +2368,17 @@ static inline int nla_total_size_64bit(int payload)
  */
 #define nla_for_each_nested(pos, nla, rem) \
 	nla_for_each_attr(pos, nla_data(nla), nla_len(nla), rem)
+
+/**
+ * nla_for_each_nested_type - iterate over nested attributes
+ * @pos: loop counter, set to current attribute
+ * @type: required attribute type for @pos
+ * @nla: attribute containing the nested attributes
+ * @rem: initialized to len, holds bytes currently remaining in stream
+ */
+#define nla_for_each_nested_type(pos, type, nla, rem) \
+	nla_for_each_nested(pos, nla, rem) \
+		if (nla_type(pos) == type)
 
 /**
  * nla_is_last - Test if attribute is last in stream

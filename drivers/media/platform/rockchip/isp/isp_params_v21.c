@@ -4355,7 +4355,7 @@ int rkisp_init_params_vdev_v21(struct rkisp_isp_params_vdev *params_vdev)
 	if (!priv_val)
 		return -ENOMEM;
 
-	params_vdev->isp21_params = vmalloc(sizeof(*params_vdev->isp21_params));
+	params_vdev->isp21_params = kvmalloc(sizeof(*params_vdev->isp21_params), GFP_KERNEL);
 	if (!params_vdev->isp21_params) {
 		kfree(priv_val);
 		return -ENOMEM;
@@ -4395,7 +4395,7 @@ err:
 
 	for (i = 0; i < RKISP_PARAM_LSC_LUT_BUF_NUM; i++)
 		rkisp_free_buffer(params_vdev->dev, &priv_val->buf_lsclut[i]);
-	vfree(params_vdev->isp21_params);
+	kvfree(params_vdev->isp21_params);
 
 	return ret;
 }
@@ -4415,7 +4415,7 @@ void rkisp_uninit_params_vdev_v21(struct rkisp_isp_params_vdev *params_vdev)
 
 	for (i = 0; i < RKISP_PARAM_LSC_LUT_BUF_NUM; i++)
 		rkisp_free_buffer(params_vdev->dev, &priv_val->buf_lsclut[i]);
-	vfree(params_vdev->isp21_params);
+	kvfree(params_vdev->isp21_params);
 	kfree(priv_val);
 	params_vdev->priv_val = NULL;
 }
