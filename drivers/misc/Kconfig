@@ -5,6 +5,8 @@
 
 menu "Misc devices"
 
+source "drivers/misc/rk628/Kconfig"
+
 config SENSORS_LIS3LV02D
 	tristate
 	depends on INPUT
