@@ -595,10 +595,10 @@ static int rk628_hdmirx_set_edid(struct rk628 *rk628)
 	u32 val;
 	u16 edid_len;
 
-	rk628_hdmirx_disable_edid(rk628);
-
 	if (!rk628->plugin_det_gpio)
 		return 0;
+
+	rk628_hdmirx_disable_edid(rk628);
 
 	/* edid access by apb when write, i2c slave addr: 0x0 */
 	rk628_i2c_update_bits(rk628, GRF_SYSTEM_CON0,
@@ -663,7 +663,7 @@ static int rk628d_hdmirx_phy_power_on(struct rk628 *rk628, int f)
 		}
 	}
 
-	dev_info(rk628->dev, "%s:rxphy_pwron=%d\n", __func__, rxphy_pwron);
+	dev_dbg(rk628->dev, "%s:rxphy_pwron=%d\n", __func__, rxphy_pwron);
 	return ret;
 }
 
@@ -712,7 +712,7 @@ static void rk628_hdmirx_get_timing(struct rk628 *rk628)
 	do_div(tmp_data, MODETCLK_CNT_NUM);
 	tmds_clk = tmp_data;
 	if (!(htotal && vtotal)) {
-		dev_info(rk628->dev, "timing err, htotal:%d, vtotal:%d\n", htotal, vtotal);
+		dev_dbg(rk628->dev, "timing err, htotal:%d, vtotal:%d\n", htotal, vtotal);
 		return;
 	}
 	/* rk628f should get exact frame rate frequency to pass hdmi2.0 cts */
@@ -744,7 +744,7 @@ static void rk628_hdmirx_get_timing(struct rk628 *rk628)
 
 	if ((hofs_pix < hs) || (htotal < (hact + hofs_pix)) ||
 	    (vtotal < (vact + vs + vbp))) {
-		dev_info(rk628->dev,
+		dev_dbg(rk628->dev,
 			 "timing err, total:%dx%d, act:%dx%d, hofs:%d, hs:%d, vs:%d, vbp:%d\n",
 			 htotal, vtotal, hact, vact, hofs_pix, hs, vs, vbp);
 		return;
@@ -753,7 +753,7 @@ static void rk628_hdmirx_get_timing(struct rk628 *rk628)
 	hfp = htotal - hact - hofs_pix;
 	vfp = vtotal - vact - vs - vbp;
 
-	dev_info(rk628->dev, "cnt_num:%d, tmds_cnt:%d, hs_cnt:%d, vs_cnt:%d, hofs:%d\n",
+	dev_dbg(rk628->dev, "cnt_num:%d, tmds_cnt:%d, hs_cnt:%d, vs_cnt:%d, hofs:%d\n",
 		 MODETCLK_CNT_NUM, tmdsclk_cnt, modetclk_cnt_hs, modetclk_cnt_vs, hofs_pix);
 
 	hfrontporch = hfp;
@@ -788,9 +788,9 @@ static void rk628_hdmirx_get_timing(struct rk628 *rk628)
 	hdmirx->mode.vtotal = hdmirx->mode.vend + vbackporch;
 	hdmirx->mode.flags = flags;
 
-	dev_info(rk628->dev, "SCDC_REGS1:%#x, act:%dx%d, total:%dx%d, fps:%d, pixclk:%llu\n",
+	dev_dbg(rk628->dev, "SCDC_REGS1:%#x, act:%dx%d, total:%dx%d, fps:%d, pixclk:%llu\n",
 		 status, hact, vact, htotal, vtotal, fps, pixelclock);
-	dev_info(rk628->dev, "hfp:%d, hs:%d, hbp:%d, vfp:%d, vs:%d, vbp:%d, interlace:%d\n",
+	dev_dbg(rk628->dev, "hfp:%d, hs:%d, hbp:%d, vfp:%d, vs:%d, vbp:%d, interlace:%d\n",
 		 hfrontporch, hsync, hbackporch, vfrontporch, vsync, vbackporch, interlaced);
 }
 
@@ -931,10 +931,10 @@ static int rk628_hdmirx_phy_setup(struct rk628 *rk628)
 			rk628_i2c_read(rk628, HDMI_RX_SCDC_REGS1, &val);
 			status = val;
 
-			dev_info(rk628->dev,
+			dev_dbg(rk628->dev,
 				 "tmdsclk_cnt:%d, modetclk_cnt_hs:%d, modetclk_cnt_vs:%d,vs:%d\n",
 				 tmdsclk_cnt, modetclk_cnt_hs, modetclk_cnt_vs, vs);
-			dev_info(rk628->dev,
+			dev_dbg(rk628->dev,
 				 "read wxh:%dx%d, total:%dx%d, SCDC_REGS1:%#x, cnt:%d\n",
 				 width, height, frame_width,
 				 frame_height, status, cnt);

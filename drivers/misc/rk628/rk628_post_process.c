@@ -1378,7 +1378,7 @@ static void rk628_post_process_scaler_init(struct rk628 *rk628,
 	dsp_vact_end = dsp_vbor_end - bor_down;
 
 	calc_dsp_frm_hst_vst(src, dst, &dsp_frame_hst, &dsp_frame_vst);
-	dev_info(rk628->dev, "dsp_frame_vst:%d  dsp_frame_hst:%d\n",
+	dev_dbg(rk628->dev, "dsp_frame_vst:%d  dsp_frame_hst:%d\n",
 		 dsp_frame_vst, dsp_frame_hst);
 
 	if (src_hactive > dst_hactive) {

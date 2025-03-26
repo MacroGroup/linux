@@ -655,7 +655,7 @@ static inline int rk628_i2c_read(struct rk628 *rk628, u32 reg, u32 *val)
 
 	ret = regmap_read(rk628->regmap[region], reg, val);
 	if (ret < 0)
-		pr_info("%s: i2c err reg=0x%x, val=0x%x ret=%d\n", __func__, reg, *val, ret);
+		pr_debug("%s: i2c err reg=0x%x, val=0x%x ret=%d\n", __func__, reg, *val, ret);
 
 	return ret;
 }
