@@ -591,7 +591,6 @@ int rkisp_register_bridge_subdev(struct rkisp_device *dev,
 	init_waitqueue_head(&bridge->done);
 	bridge->wq = alloc_workqueue("rkisp bridge workqueue",
 				     WQ_UNBOUND | WQ_MEM_RECLAIM, 1);
-	hrtimer_init(&bridge->frame_qst, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	return ret;
 
 free_media:
