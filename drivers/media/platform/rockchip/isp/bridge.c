@@ -595,6 +595,8 @@ int rkisp_register_bridge_subdev(struct rkisp_device *dev,
 
 free_media:
 	media_entity_cleanup(&sd->entity);
+	hrtimer_setup(&bridge->frame_qst, hrtimer_dummy_timeout,
+		      CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	return ret;
 }
 
