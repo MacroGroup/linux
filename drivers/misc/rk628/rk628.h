@@ -15,7 +15,6 @@
 #include <linux/regmap.h>
 #include <linux/version.h>
 #include <linux/of.h>
-#include <linux/wakelock.h>
 #include <linux/workqueue.h>
 #include <linux/regulator/consumer.h>
 

@@ -536,7 +536,7 @@ static int rk628_fb_notifier_callback(struct notifier_block *nb,
 	struct fb_event *ev_data = data;
 	int *blank;
 
-	if ((event != FB_EVENT_BLANK) || (!ev_data) || (!ev_data->data))
+	if ((!ev_data) || (!ev_data->data))
 		return NOTIFY_DONE;
 
 	blank = ev_data->data;
