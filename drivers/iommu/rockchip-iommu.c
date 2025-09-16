@@ -119,8 +119,6 @@ struct rk_iommu {
 	struct iommu_device iommu;
 	struct list_head node; /* entry in rk_iommu_domain.iommus */
 	struct iommu_domain *domain; /* domain to which iommu is attached */
-	struct iommu_group *group;
-	bool iommu_enabled;
 };
 
 struct rk_iommudata {
@@ -926,8 +924,6 @@ static void rk_iommu_disable(struct rk_iommu *iommu)
 	}
 	rk_iommu_disable_stall(iommu);
 	clk_bulk_disable(iommu->num_clocks, iommu->clocks);
-
-	iommu->iommu_enabled = false;
 }
 
 int rockchip_iommu_disable(struct device *dev)
@@ -977,9 +973,6 @@ out_disable_stall:
 out_disable_clocks:
 	clk_bulk_disable(iommu->num_clocks, iommu->clocks);
 
-	if (!ret)
-		iommu->iommu_enabled = true;
-
 	return ret;
 }
 
@@ -994,40 +987,6 @@ int rockchip_iommu_enable(struct device *dev)
 	return rk_iommu_enable(iommu);
 }
 EXPORT_SYMBOL(rockchip_iommu_enable);
-
-bool rockchip_iommu_is_enabled(struct device *dev)
-{
-	struct rk_iommu *iommu;
-
-	iommu = rk_iommu_from_dev(dev);
-	if (!iommu)
-		return false;
-
-	return iommu->iommu_enabled;
-}
-EXPORT_SYMBOL(rockchip_iommu_is_enabled);
-
-int rockchip_iommu_force_reset(struct device *dev)
-{
-	struct rk_iommu *iommu;
-	int ret;
-
-	iommu = rk_iommu_from_dev(dev);
-	if (!iommu)
-		return -ENODEV;
-
-	ret = rk_iommu_enable_stall(iommu);
-	if (ret)
-		return ret;
-
-	ret = rk_iommu_force_reset(iommu);
-
-	rk_iommu_disable_stall(iommu);
-
-	return ret;
-
-}
-EXPORT_SYMBOL(rockchip_iommu_force_reset);
 
 static int rk_iommu_identity_attach(struct iommu_domain *identity_domain,
 				    struct device *dev)
@@ -1233,37 +1192,6 @@ static int rk_iommu_of_xlate(struct device *dev,
 
 	return 0;
 }
-
-void rockchip_iommu_mask_irq(struct device *dev)
-{
-	struct rk_iommu *iommu = rk_iommu_from_dev(dev);
-	int i;
-
-	if (!iommu)
-		return;
-
-	for (i = 0; i < iommu->num_mmu; i++)
-		rk_iommu_write(iommu->bases[i], RK_MMU_INT_MASK, 0);
-}
-EXPORT_SYMBOL(rockchip_iommu_mask_irq);
-
-void rockchip_iommu_unmask_irq(struct device *dev)
-{
-	struct rk_iommu *iommu = rk_iommu_from_dev(dev);
-	int i;
-
-	if (!iommu)
-		return;
-
-	for (i = 0; i < iommu->num_mmu; i++) {
-		/* Need to zap tlb in case of mapping during pagefault */
-		rk_iommu_base_command(iommu->bases[i], RK_MMU_CMD_ZAP_CACHE);
-		rk_iommu_write(iommu->bases[i], RK_MMU_INT_MASK, RK_MMU_IRQ_MASK);
-		/* Leave iommu in pagefault state until mapping finished */
-		rk_iommu_base_command(iommu->bases[i], RK_MMU_CMD_PAGE_FAULT_DONE);
-	}
-}
-EXPORT_SYMBOL(rockchip_iommu_unmask_irq);
 
 static const struct iommu_ops rk_iommu_ops = {
 	.identity_domain = &rk_identity_domain,
