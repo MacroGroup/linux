@@ -426,10 +426,103 @@ static void px30_lvds_encoder_disable(struct drm_encoder *encoder)
 	drm_panel_unprepare(lvds->panel);
 }
 
+static int rk3568_lvds_poweron(struct rockchip_lvds *lvds)
+{
+	int ret;
+
+	ret = clk_enable(lvds->pclk);
+	if (ret < 0) {
+		DRM_DEV_ERROR(lvds->dev, "failed to enable lvds pclk %d\n", ret);
+		return ret;
+	}
+
+	ret = pm_runtime_resume_and_get(lvds->dev);
+	if (ret < 0) {
+		DRM_DEV_ERROR(lvds->dev, "failed to get pm runtime: %d\n", ret);
+		clk_disable(lvds->pclk);
+		return ret;
+	}
+
+	/* Enable LVDS mode */
+	ret = regmap_write(lvds->grf, RK3568_GRF_VO_CON2,
+			   RK3568_LVDS0_MODE_EN(1) | RK3568_LVDS0_P2S_EN(1));
+
+	if (ret)
+		pm_runtime_put(lvds->dev);
+
+	return ret;
+}
+
+static void rk3568_lvds_poweroff(struct rockchip_lvds *lvds)
+{
+	regmap_write(lvds->grf, RK3568_GRF_VO_CON2,
+		     RK3568_LVDS0_MODE_EN(0) | RK3568_LVDS0_P2S_EN(0));
+
+	pm_runtime_put(lvds->dev);
+	clk_disable(lvds->pclk);
+}
+
+static int rk3568_lvds_grf_config(struct drm_encoder *encoder,
+				  struct drm_display_mode *mode)
+{
+	struct rockchip_lvds *lvds = encoder_to_lvds(encoder);
+
+	if (lvds->output != DISPLAY_OUTPUT_LVDS) {
+		DRM_DEV_ERROR(lvds->dev, "Unsupported display output %d\n",
+			      lvds->output);
+		return -EINVAL;
+	}
+
+	/* Set format */
+	return regmap_write(lvds->grf, RK3568_GRF_VO_CON0,
+			    RK3568_LVDS0_SELECT(lvds->format) | RK3568_LVDS0_MSBSEL(1));
+}
+
+static void rk3568_lvds_encoder_enable(struct drm_encoder *encoder)
+{
+	struct rockchip_lvds *lvds = encoder_to_lvds(encoder);
+	struct drm_display_mode *mode = &encoder->crtc->state->adjusted_mode;
+	int ret;
+
+	drm_panel_prepare(lvds->panel);
+
+	ret = rk3568_lvds_poweron(lvds);
+	if (ret) {
+		DRM_DEV_ERROR(lvds->dev, "failed to power on LVDS: %d\n", ret);
+		drm_panel_unprepare(lvds->panel);
+		return;
+	}
+
+	ret = rk3568_lvds_grf_config(encoder, mode);
+	if (ret) {
+		DRM_DEV_ERROR(lvds->dev, "failed to configure LVDS: %d\n", ret);
+		drm_panel_unprepare(lvds->panel);
+		return;
+	}
+
+	drm_panel_enable(lvds->panel);
+}
+
+static void rk3568_lvds_encoder_disable(struct drm_encoder *encoder)
+{
+	struct rockchip_lvds *lvds = encoder_to_lvds(encoder);
+
+	drm_panel_disable(lvds->panel);
+	rk3568_lvds_poweroff(lvds);
+	drm_panel_unprepare(lvds->panel);
+}
+
 static const
 struct drm_encoder_helper_funcs rk3288_lvds_encoder_helper_funcs = {
 	.enable = rk3288_lvds_encoder_enable,
 	.disable = rk3288_lvds_encoder_disable,
+	.atomic_check = rockchip_lvds_encoder_atomic_check,
+};
+
+static const
+struct drm_encoder_helper_funcs rk3568_lvds_encoder_helper_funcs = {
+	.enable = rk3568_lvds_encoder_enable,
+	.disable = rk3568_lvds_encoder_disable,
 	.atomic_check = rockchip_lvds_encoder_atomic_check,
 };
 
@@ -475,19 +568,11 @@ static int rk3288_lvds_probe(struct platform_device *pdev,
 	return 0;
 }
 
-static int px30_lvds_probe(struct platform_device *pdev,
+static int rockchip_lvds_phy_probe(struct platform_device *pdev,
 			   struct rockchip_lvds *lvds)
 {
 	int ret;
 
-	/* MSB */
-	ret =  regmap_update_bits(lvds->grf, PX30_LVDS_GRF_PD_VO_CON1,
-				  PX30_LVDS_MSBSEL(1),
-				  PX30_LVDS_MSBSEL(1));
-	if (ret)
-		return ret;
-
-	/* PHY */
 	lvds->dphy = devm_phy_get(&pdev->dev, "dphy");
 	if (IS_ERR(lvds->dphy))
 		return PTR_ERR(lvds->dphy);
@@ -503,9 +588,29 @@ static int px30_lvds_probe(struct platform_device *pdev,
 	return phy_power_on(lvds->dphy);
 }
 
+static int px30_lvds_probe(struct platform_device *pdev,
+			   struct rockchip_lvds *lvds)
+{
+	int ret;
+
+	/* MSB */
+	ret =  regmap_update_bits(lvds->grf, PX30_LVDS_GRF_PD_VO_CON1,
+				  PX30_LVDS_MSBSEL(1),
+				  PX30_LVDS_MSBSEL(1));
+	if (ret)
+		return ret;
+
+	return rockchip_lvds_phy_probe(pdev, lvds);
+}
+
 static const struct rockchip_lvds_soc_data rk3288_lvds_data = {
 	.probe = rk3288_lvds_probe,
 	.helper_funcs = &rk3288_lvds_encoder_helper_funcs,
+};
+
+static const struct rockchip_lvds_soc_data rk3568_lvds_data = {
+	.probe = rockchip_lvds_phy_probe,
+	.helper_funcs = &rk3568_lvds_encoder_helper_funcs,
 };
 
 static const struct rockchip_lvds_soc_data px30_lvds_data = {
@@ -517,6 +622,10 @@ static const struct of_device_id rockchip_lvds_dt_ids[] = {
 	{
 		.compatible = "rockchip,rk3288-lvds",
 		.data = &rk3288_lvds_data
+	},
+	{
+		.compatible = "rockchip,rk3568-lvds",
+		.data = &rk3568_lvds_data
 	},
 	{
 		.compatible = "rockchip,px30-lvds",
@@ -547,7 +656,9 @@ static int rockchip_lvds_bind(struct device *dev, struct device *master,
 
 	for_each_child_of_node(port, endpoint) {
 		child_count++;
-		of_property_read_u32(endpoint, "reg", &endpoint_id);
+		if (of_property_read_u32(endpoint, "reg", &endpoint_id))
+			endpoint_id = 0;
+
 		ret = drm_of_find_panel_or_bridge(dev->of_node, 1, endpoint_id,
 						  &lvds->panel, &lvds->bridge);
 		if (!ret) {
@@ -559,7 +670,8 @@ static int rockchip_lvds_bind(struct device *dev, struct device *master,
 		ret = dev_err_probe(dev, -EINVAL, "lvds port does not have any children\n");
 		goto err_put_port;
 	} else if (ret) {
-		dev_err_probe(dev, ret, "failed to find panel and bridge node\n");
+		if (ret != -EPROBE_DEFER)
+			dev_err_probe(dev, ret, "failed to find panel and bridge node\n");
 		goto err_put_port;
 	}
 	if (lvds->panel)
@@ -592,6 +704,8 @@ static int rockchip_lvds_bind(struct device *dev, struct device *master,
 	encoder = &lvds->encoder.encoder;
 	encoder->possible_crtcs = drm_of_find_possible_crtcs(drm_dev,
 							     dev->of_node);
+	rockchip_drm_encoder_set_crtc_endpoint_id(&lvds->encoder,
+						  dev->of_node, 0, 0);
 
 	ret = drm_simple_encoder_init(drm_dev, encoder, DRM_MODE_ENCODER_LVDS);
 	if (ret < 0) {
@@ -694,9 +808,19 @@ static int rockchip_lvds_probe(struct platform_device *pdev)
 	if (IS_ERR(lvds->grf))
 		return dev_err_probe(dev, PTR_ERR(lvds->grf), "missing rockchip,grf property\n");
 
+	lvds->pclk = devm_clk_get_optional(lvds->dev, "pclk_lvds");
+	if (IS_ERR(lvds->pclk)) {
+		return dev_err_probe(lvds->dev, PTR_ERR(lvds->pclk), "could not get pclk_lvds\n");
+	}
+
 	ret = lvds->soc_data->probe(pdev, lvds);
 	if (ret)
 		return dev_err_probe(dev, ret, "Platform initialization failed\n");
+
+	ret = clk_prepare(lvds->pclk);
+	if (ret < 0) {
+		return dev_err_probe(lvds->dev, ret, "failed to prepare pclk_lvds\n");
+	}
 
 	dev_set_drvdata(dev, lvds);
 
