@@ -1251,6 +1251,18 @@ static int imx290_entity_init_state(struct v4l2_subdev *subdev,
 	return 0;
 }
 
+static int imx290_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
+				struct v4l2_mbus_config *config)
+{
+	struct imx290 *imx290 = to_imx290(sd);
+
+	config->type = V4L2_MBUS_CSI2_DPHY;
+	config->bus.mipi_csi2.flags = 0;
+	config->bus.mipi_csi2.num_data_lanes = imx290->nlanes;
+
+	return 0;
+}
+
 static const struct v4l2_subdev_video_ops imx290_video_ops = {
 	.s_stream = imx290_set_stream,
 };
@@ -1261,6 +1273,7 @@ static const struct v4l2_subdev_pad_ops imx290_pad_ops = {
 	.get_fmt = v4l2_subdev_get_fmt,
 	.set_fmt = imx290_set_fmt,
 	.get_selection = imx290_get_selection,
+	.get_mbus_config = imx290_g_mbus_config,
 };
 
 static const struct v4l2_subdev_ops imx290_subdev_ops = {
