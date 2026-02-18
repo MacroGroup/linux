@@ -5,6 +5,7 @@
  * Author: Wyon Bi <bivvy.bi@rock-chips.com>
  */
 
+#include <linux/fb.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
