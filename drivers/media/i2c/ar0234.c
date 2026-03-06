@@ -86,7 +86,7 @@
 #define AR0234_REG_MFR_30BA				CCI_REG16(0x30ba)
 #	define AR0234_MFR_30BA_GAIN_BITS(x)		(0x7620 | (x))
 #define AR0234_REG_DATA_FORMAT_BITS			CCI_REG16(0x31ac)
-#	define DATA_FORMAT_BITS(x,y)			(((x) << 8) | (y))
+#	define DATA_FORMAT_BITS(x, y)			(((x) << 8) | (y))
 #define AR0234_REG_SERIAL_FORMAT			CCI_REG16(0x31ae)
 #	define DATA_FORMAT_LANES(x)			(0x200 | (x))
 #define AR0234_REG_COMPANDING				CCI_REG16(0x31d0)
