@@ -8,7 +8,7 @@
  * Copyright (C) 2021, Raspberry Pi (Trading) Ltd
  * Copyright (C) 2025-2026, UAB Kurokesu
  * Author: Dave Stevenson <dave.stevenson@raspberrypi.com>
- // * Author: Danius Kalvaitis <danius@kurokesu.com>
+ * Author: Danius Kalvaitis <danius@kurokesu.com>
  *
  * Some parts of code taken from imx290.c by:
  * Copyright (C) 2019 FRAMOS GmbH.
@@ -22,6 +22,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/gpio/consumer.h>
 #include <linux/regulator/consumer.h>
+#include <media/mipi-csi2.h>
 #include <media/v4l2-cci.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-event.h>
@@ -85,9 +86,12 @@
 #define AR0234_REG_MFR_30BA				CCI_REG16(0x30ba)
 #	define AR0234_MFR_30BA_GAIN_BITS(x)		(0x7620 | (x))
 #define AR0234_REG_DATA_FORMAT_BITS			CCI_REG16(0x31ac)
-#	define DATA_FORMAT_BITS(x)			(((x) << 8) | (x))
+#	define DATA_FORMAT_BITS(x,y)			(((x) << 8) | (y))
 #define AR0234_REG_SERIAL_FORMAT			CCI_REG16(0x31ae)
 #	define DATA_FORMAT_LANES(x)			(0x200 | (x))
+#define AR0234_REG_COMPANDING				CCI_REG16(0x31d0)
+#	define COMPANDING_DPCM_EN			BIT(0)
+#define AR0234_REG_MIPI_CNTRL				CCI_REG16(0x3354)
 
 #define AR0234_NATIVE_WIDTH				(1940U)
 #define AR0234_NATIVE_HEIGHT				(1220U)
@@ -121,34 +125,66 @@ static const unsigned int ar0234_test_pattern_val[] = {
 };
 
 static const char *const ar0234_supply_names[] = {
-	"vana",
-	"vdig",
-	"vddl",
+	"vaa",
+	"vdd",
+	"vddio",
 };
 
 enum ar0234_colour_variant {
-	AR0234_VARIANT_COLOUR,
 	AR0234_VARIANT_MONO,
+	AR0234_VARIANT_COLOUR,
 	AR0234_VARIANT_MAX
 };
 
+enum ar0234_link_freq_index {
+	AR0234_LINK_FREQ_IDX_BPP_8,
+	AR0234_LINK_FREQ_IDX_BPP_10,
+	AR0234_LINK_FREQ_IDX_MAX
+};
+
 struct ar0234_mode {
-	u8 bpp;
+	u8 bpp_in;
+	u8 bpp_out;
+	u8 dpcm;
+	u8 mipi_dt;
+	int link_freq_index;
 	u32 code[AR0234_VARIANT_MAX];
 };
 
 static const struct ar0234_mode ar0234_modes[] = {
 	{
-		.bpp = 10,
+		.bpp_in = 8,
+		.bpp_out = 8,
+		.dpcm = 0,
+		.mipi_dt = MIPI_CSI2_DT_RAW8,
+		.link_freq_index = AR0234_LINK_FREQ_IDX_BPP_8,
 		.code = {
-			[AR0234_VARIANT_COLOUR] = MEDIA_BUS_FMT_SGRBG10_1X10,
-			[AR0234_VARIANT_MONO] = MEDIA_BUS_FMT_Y10_1X10,
+			[AR0234_VARIANT_MONO] = MEDIA_BUS_FMT_Y8_1X8,
+			[AR0234_VARIANT_COLOUR] = MEDIA_BUS_FMT_SGRBG8_1X8,
 		},
 	},
-};
-
-static const s64 link_freqs[] = {
-	450000000LL,
+	{
+		.bpp_in = 10,
+		.bpp_out = 10,
+		.dpcm = 0,
+		.mipi_dt = MIPI_CSI2_DT_RAW10,
+		.link_freq_index = AR0234_LINK_FREQ_IDX_BPP_10,
+		.code = {
+			[AR0234_VARIANT_MONO] = MEDIA_BUS_FMT_Y10_1X10,
+			[AR0234_VARIANT_COLOUR] = MEDIA_BUS_FMT_SGRBG10_1X10,
+		},
+	},
+	{
+		.bpp_in = 10,
+		.bpp_out = 8,
+		.dpcm = COMPANDING_DPCM_EN,
+		.mipi_dt = MIPI_CSI2_DT_RAW10,
+		.link_freq_index = AR0234_LINK_FREQ_IDX_BPP_8,
+		.code = {
+			[AR0234_VARIANT_COLOUR] =
+				MEDIA_BUS_FMT_SGRBG10_DPCM8_1X8,
+		},
+	},
 };
 
 struct ar0234 {
@@ -164,7 +200,7 @@ struct ar0234 {
 
 	unsigned int num_data_lanes;
 
-	unsigned long link_freq_bitmap;
+	s64 link_freqs[AR0234_LINK_FREQ_IDX_MAX];
 
 	enum ar0234_colour_variant variant;
 
@@ -180,6 +216,7 @@ struct ar0234 {
 	struct v4l2_ctrl *hblank;
 	struct v4l2_ctrl *vblank;
 	struct v4l2_ctrl *exposure;
+	struct v4l2_ctrl *pixel_rate;
 	struct v4l2_ctrl *link_freq;
 	struct v4l2_ctrl *a_gain;
 	struct {
@@ -199,7 +236,7 @@ static const struct ccs_pll_limits ar0234_pll_limits = {
 	.vt_fr = {
 		.min_pre_pll_clk_div = 1,
 		.max_pre_pll_clk_div = 63,
-		.min_pll_ip_clk_freq_hz = 1500000,
+		.min_pll_ip_clk_freq_hz = 6000000,
 		.max_pll_ip_clk_freq_hz = 12000000,
 		.min_pll_multiplier = 2,
 		.max_pll_multiplier = 254,
@@ -208,49 +245,54 @@ static const struct ccs_pll_limits ar0234_pll_limits = {
 	},
 	.vt_bk = {
 		.min_sys_clk_div = 1,
-		.max_sys_clk_div = 63,
-		.min_sys_clk_freq_hz = 45000000,
+		.max_sys_clk_div = 31,
+		.min_sys_clk_freq_hz = 6000000,
 		.max_sys_clk_freq_hz = 768000000,
 		.min_pix_clk_div = 1,
-		.max_pix_clk_div = 63,
-		.min_pix_clk_freq_hz = 45000000,
+		.max_pix_clk_div = 31,
+		.min_pix_clk_freq_hz = 6000000,
 		.max_pix_clk_freq_hz = 90000000,
 	},
 	.op_bk = {
 		.min_sys_clk_div = 1,
-		.max_sys_clk_div = 63,
-		.min_sys_clk_freq_hz = 45000000,
+		.max_sys_clk_div = 31,
+		.min_sys_clk_freq_hz = 6000000,
 		.max_sys_clk_freq_hz = 768000000,
 		.min_pix_clk_div = 1,
-		.max_pix_clk_div = 63,
-		.min_pix_clk_freq_hz = 45000000,
+		.max_pix_clk_div = 31,
+		.min_pix_clk_freq_hz = 6000000,
 		.max_pix_clk_freq_hz = 90000000,
 	},
 };
 
-static int ar0234_calculate_pll(struct ar0234 *ar0234)
+static int ar0234_calculate_pll(struct ar0234 *ar0234,
+				const struct ar0234_mode *mode)
 {
-	memset(&ar0234->pll, 0, sizeof(ar0234->pll));
+	struct ccs_pll pll = { 0 };
+	int ret;
 
-	ar0234->pll.bus_type = CCS_PLL_BUS_TYPE_CSI2_DPHY;
-	ar0234->pll.op_lanes = ar0234->num_data_lanes;
-	ar0234->pll.vt_lanes = 1;
-	ar0234->pll.csi2.lanes = ar0234->num_data_lanes;
-	ar0234->pll.binning_horizontal = 1;
-	ar0234->pll.binning_vertical = 1;
-	ar0234->pll.scale_m = 1;
-	ar0234->pll.scale_n = 1;
-	ar0234->pll.bits_per_pixel = ar0234->mode->bpp;
-	ar0234->pll.flags = CCS_PLL_FLAG_LANE_SPEED_MODEL |
-			    CCS_PLL_FLAG_EVEN_PLL_MULTIPLIER |
-			    CCS_PLL_FLAG_FIFO_DERATING |
-			    CCS_PLL_FLAG_FIFO_OVERRATING |
-			    CCS_PLL_FLAG_EXT_IP_PLL_DIVIDER;
-	ar0234->pll.link_freq = link_freqs[__ffs(ar0234->link_freq_bitmap)];
-	ar0234->pll.link_freq /= 2;
-	ar0234->pll.ext_clk_freq_hz = clk_get_rate(ar0234->clk);
+	pll.bus_type = CCS_PLL_BUS_TYPE_CSI2_DPHY;
+	pll.op_lanes = ar0234->num_data_lanes;
+	pll.vt_lanes = 1;
+	pll.csi2.lanes = ar0234->num_data_lanes;
+	pll.binning_horizontal = 1;
+	pll.binning_vertical = 1;
+	pll.scale_m = 1;
+	pll.scale_n = 1;
+	pll.bits_per_pixel = mode->bpp_out;
+	pll.flags = CCS_PLL_FLAG_LANE_SPEED_MODEL |
+		    CCS_PLL_FLAG_EVEN_PLL_MULTIPLIER |
+		    CCS_PLL_FLAG_FIFO_DERATING |
+		    CCS_PLL_FLAG_FIFO_OVERRATING |
+		    CCS_PLL_FLAG_EXT_IP_PLL_DIVIDER;
+	pll.link_freq = ar0234->link_freqs[mode->link_freq_index] / 2;
+	pll.ext_clk_freq_hz = clk_get_rate(ar0234->clk);
 
-	return ccs_pll_calculate(ar0234->dev, &ar0234_pll_limits, &ar0234->pll);
+	ret = ccs_pll_calculate(ar0234->dev, &ar0234_pll_limits, &pll);
+	if (!ret)
+		ar0234->pll = pll;
+
+	return ret;
 }
 
 static u32 ar0234_calc_analog_gain(u32 req_gain_q6, u32 *reg_val)
@@ -446,6 +488,9 @@ static int ar0234_enum_mbus_code(struct v4l2_subdev *sd,
 	if (code->index >= ARRAY_SIZE(ar0234_modes))
 		return -EINVAL;
 
+	if (!ar0234_modes[code->index].code[ar0234->variant])
+		return -EINVAL;
+
 	code->code = ar0234_modes[code->index].code[ar0234->variant];
 
 	return 0;
@@ -455,12 +500,7 @@ static int ar0234_enum_frame_size(struct v4l2_subdev *sd,
 				  struct v4l2_subdev_state *sd_state,
 				  struct v4l2_subdev_frame_size_enum *fse)
 {
-	struct ar0234 *ar0234 = to_ar0234(sd);
-
 	if (fse->index >= ARRAY_SIZE(ar0234_modes))
-		return -EINVAL;
-
-	if (fse->code != ar0234_modes[fse->index].code[ar0234->variant])
 		return -EINVAL;
 
 	fse->min_width = AR0234_MIN_CROP_WIDTH;
@@ -469,6 +509,18 @@ static int ar0234_enum_frame_size(struct v4l2_subdev *sd,
 	fse->max_height = AR0234_PIXEL_ARRAY_HEIGHT;
 
 	return 0;
+}
+
+static void ar0234_set_link_limits(struct ar0234 *ar0234)
+{
+	u64 pixel_rate = ar0234->link_freqs[ar0234->mode->link_freq_index] * 2;
+
+	pixel_rate *= ar0234->num_data_lanes;
+	do_div(pixel_rate, ar0234->mode->bpp_out);
+
+	__v4l2_ctrl_s_ctrl_int64(ar0234->pixel_rate, pixel_rate);
+
+	__v4l2_ctrl_s_ctrl(ar0234->link_freq, ar0234->mode->link_freq_index);
 }
 
 static void ar0234_set_framing_limits(struct ar0234 *ar0234)
@@ -513,7 +565,6 @@ static int ar0234_set_pad_format(struct v4l2_subdev *sd,
 						  AR0234_CROP_HEIGHT_STEP),
 			 AR0234_MIN_CROP_HEIGHT, AR0234_PIXEL_ARRAY_HEIGHT);
 
-	fmt->format.code = mode->code[ar0234->variant];
 	fmt->format.width = width;
 	fmt->format.height = height;
 	fmt->format.field = V4L2_FIELD_NONE;
@@ -528,17 +579,17 @@ static int ar0234_set_pad_format(struct v4l2_subdev *sd,
 	}
 
 	if (ar0234->mode != mode) {
-		int ret;
-
-		ar0234->mode = mode;
-
-		ret = ar0234_calculate_pll(ar0234);
+		int ret = ar0234_calculate_pll(ar0234, mode);
 
 		if (ret) {
 			dev_err(ar0234->dev,
 				"PLL recalculations failed: %d\n", ret);
 			return ret;
 		}
+
+		ar0234->mode = mode;
+
+		ar0234_set_link_limits(ar0234);
 	}
 
 	if (ar0234->crop.width != width || ar0234->crop.height != height) {
@@ -738,19 +789,6 @@ static int ar0234_enable_streams(struct v4l2_subdev *sd,
 	if (ret)
 		return ret;
 
-	/* Keep for debug for a while */
-//	pr_info("pre_pll_clk_div %i\n", ar0234->pll.vt_fr.pre_pll_clk_div);
-//	pr_info("pll_multiplier %i\n", ar0234->pll.vt_fr.pll_multiplier);
-
-//	pr_info("vt_bk.sys_clk_div %i\n", ar0234->pll.vt_bk.sys_clk_div);
-//	pr_info("vt_bk.pix_clk_div %i\n", ar0234->pll.vt_bk.pix_clk_div);
-
-//	pr_info("op_bk.pix_clk_div %i\n", ar0234->pll.op_bk.pix_clk_div);
-//	pr_info("op_bk.sys_clk_div %i\n", ar0234->pll.op_bk.sys_clk_div);
-
-//	pr_info("pixel_rate_csi %u\n", ar0234->pll.pixel_rate_csi);
-//	pr_info("pixel_rate_pixel_array %u\n", ar0234->pll.pixel_rate_pixel_array);
-
 	cci_write(ar0234->regmap, AR0234_REG_PRE_PLL_CLK_DIV,
 		  ar0234->pll.vt_fr.pre_pll_clk_div, &ret);
 	cci_write(ar0234->regmap, AR0234_REG_PLL_MULTIPLIER,
@@ -771,10 +809,18 @@ static int ar0234_enable_streams(struct v4l2_subdev *sd,
 	cci_multi_reg_write(ar0234->regmap, ar0234_common_init,
 			    ARRAY_SIZE(ar0234_common_init), &ret);
 
+	cci_write(ar0234->regmap, AR0234_REG_COMPANDING,
+		  ar0234->mode->dpcm, &ret);
+
 	cci_write(ar0234->regmap, AR0234_REG_DATA_FORMAT_BITS,
-		  DATA_FORMAT_BITS(ar0234->mode->bpp), &ret);
+		  DATA_FORMAT_BITS(ar0234->mode->bpp_in, ar0234->mode->bpp_out),
+		  &ret);
+
 	cci_write(ar0234->regmap, AR0234_REG_SERIAL_FORMAT,
 		  DATA_FORMAT_LANES(ar0234->num_data_lanes), &ret);
+
+	cci_write(ar0234->regmap, AR0234_REG_MIPI_CNTRL,
+		  ar0234->mode->mipi_dt, &ret);
 
 	x_addr_start = ar0234->crop.left;
 	y_addr_start = ar0234->crop.top;
@@ -871,7 +917,7 @@ static const struct media_entity_operations ar0234_subdev_entity_ops = {
 static int ar0234_ctrls_init(struct ar0234 *ar0234)
 {
 	struct v4l2_fwnode_device_properties props;
-	int i, pixel_rate, ret;
+	int i, ret;
 
 	ret = v4l2_fwnode_device_parse(ar0234->dev, &props);
 	if (ret)
@@ -894,10 +940,9 @@ static int ar0234_ctrls_init(struct ar0234 *ar0234)
 					     AR0234_EXPOSURE_MIN, U16_MAX,
 					     AR0234_EXPOSURE_STEP, 200);
 
-	pixel_rate =
-		ar0234->pll.pixel_rate_pixel_array * ar0234->num_data_lanes;
-	v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops, V4L2_CID_PIXEL_RATE,
-			  pixel_rate, pixel_rate, 1, pixel_rate);
+	ar0234->pixel_rate = v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops,
+					       V4L2_CID_PIXEL_RATE, 1,
+					       INT_MAX, 1, 1);
 
 	ar0234->a_gain = v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops,
 					   V4L2_CID_ANALOGUE_GAIN,
@@ -934,9 +979,8 @@ static int ar0234_ctrls_init(struct ar0234 *ar0234)
 	ar0234->link_freq =
 		v4l2_ctrl_new_int_menu(&ar0234->ctrls, &ar0234_ctrl_ops,
 				       V4L2_CID_LINK_FREQ,
-				       __fls(ar0234->link_freq_bitmap),
-				       __ffs(ar0234->link_freq_bitmap),
-				       link_freqs);
+				       AR0234_LINK_FREQ_IDX_MAX - 1, 0,
+				       ar0234->link_freqs);
 	if (ar0234->link_freq)
 		ar0234->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
@@ -949,6 +993,7 @@ static int ar0234_ctrls_init(struct ar0234 *ar0234)
 
 	ar0234->sd.ctrl_handler = &ar0234->ctrls;
 
+	ar0234_set_link_limits(ar0234);
 	ar0234_set_framing_limits(ar0234);
 
 	return 0;
@@ -1005,12 +1050,25 @@ static int ar0234_parse_hw_config(struct ar0234 *ar0234)
 		goto done_endpoint_free;
 	}
 
-	ret = v4l2_link_freq_to_bitmap(ar0234->dev, bus_cfg.link_frequencies,
-				       bus_cfg.nr_of_link_frequencies,
-				       link_freqs, ARRAY_SIZE(link_freqs),
-				       &ar0234->link_freq_bitmap);
-	if (!ret && !ar0234->link_freq_bitmap)
-		ret = -EINVAL;
+	if (bus_cfg.nr_of_link_frequencies != AR0234_LINK_FREQ_IDX_MAX) {
+		ret = dev_err_probe(ar0234->dev, -EINVAL,
+				    "Invalid number of link freq items %d\n",
+				    bus_cfg.nr_of_link_frequencies);
+		goto done_endpoint_free;
+	}
+
+	for (i = 0; i < bus_cfg.nr_of_link_frequencies; i++) {
+		s64 freq = bus_cfg.link_frequencies[i];
+
+		if (freq < 360000000LL || freq > 450000000LL) {
+			ret = dev_err_probe(ar0234->dev, -EINVAL,
+					    "Invalid link frequency %lli\n",
+					    freq);
+			goto done_endpoint_free;
+		}
+
+		ar0234->link_freqs[i] = freq;
+	}
 
 done_endpoint_free:
 	v4l2_fwnode_endpoint_free(&bus_cfg);
@@ -1150,7 +1208,7 @@ static int ar0234_probe(struct i2c_client *client)
 
 	ar0234->mode = &ar0234_modes[0];
 
-	ret = ar0234_calculate_pll(ar0234);
+	ret = ar0234_calculate_pll(ar0234, ar0234->mode);
 	if (ret) {
 		dev_err(ar0234->dev, "PLL calculations failed: %d\n", ret);
 		goto error_pm;
