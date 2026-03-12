@@ -52,6 +52,10 @@
 #define AR0234_REG_RESET				CCI_REG16(0x301a)
 #define AR0234_REG_MODE_SELECT				CCI_REG8(0x301c)
 #define AR0234_REG_IMAGE_ORIENTATION			CCI_REG8(0x301d)
+#define AR0234_REG_DATA_PEDESTAL			CCI_REG16(0x301e)
+#	define AR0234_DATA_PEDESTAL_MIN			(0x0000)
+#	define AR0234_DATA_PEDESTAL_MAX			(0x03ff)
+#	define AR0234_DATA_PEDESTAL_DEFAULT		(0x002a)
 #define AR0234_REG_GROUPED_PARAMETER_HOLD		CCI_REG8(0x3022)
 #define AR0234_REG_VT_PIX_CLK_DIV			CCI_REG16(0x302a)
 #define AR0234_REG_VT_SYS_CLK_DIV			CCI_REG16(0x302c)
@@ -59,16 +63,16 @@
 #define AR0234_REG_PLL_MULTIPLIER			CCI_REG16(0x3030)
 #define AR0234_REG_OP_PIX_CLK_DIV			CCI_REG16(0x3036)
 #define AR0234_REG_OP_SYS_CLK_DIV			CCI_REG16(0x3038)
+#define AR0234_REG_BLUE_GAIN				CCI_REG16(0x3058)
+#define AR0234_REG_RED_GAIN				CCI_REG16(0x305a)
 #define AR0234_REG_GLOBAL_GAIN				CCI_REG16(0x305e)
-#	define AR0234_DGTL_GAIN_MIN			(0x0080)
-#	define AR0234_DGTL_GAIN_MAX			(0x07ff)
-#	define AR0234_DGTL_GAIN_DEFAULT			(0x0080)
-#	define AR0234_DGTL_GAIN_STEP			(1)
+#	define AR0234_GAIN_MIN				(0x0080)
+#	define AR0234_GAIN_MAX				(0x07ff)
+#	define AR0234_GAIN_DEFAULT			(0x0080)
 #define AR0234_REG_ANALOG_GAIN				CCI_REG16(0x3060)
 #	define AR0234_ANA_GAIN_BASE			(64)
 #	define AR0234_ANA_GAIN_MIN			(AR0234_ANA_GAIN_BASE)
 #	define AR0234_ANA_GAIN_MAX			(16 * AR0234_ANA_GAIN_BASE)
-#	define AR0234_ANA_GAIN_STEP			(1)
 #	define AR0234_ANA_GAIN_DEFAULT			(AR0234_ANA_GAIN_BASE)
 #define AR0234_REG_TEST_PATTERN_MODE			CCI_REG16(0x3070)
 #	define AR0234_TEST_PATTERN_DISABLED		(0)
@@ -213,11 +217,11 @@ struct ar0234 {
 
 	struct v4l2_ctrl_handler ctrls;
 
+	struct v4l2_ctrl *pixel_rate;
+	struct v4l2_ctrl *link_freq;
 	struct v4l2_ctrl *hblank;
 	struct v4l2_ctrl *vblank;
 	struct v4l2_ctrl *exposure;
-	struct v4l2_ctrl *pixel_rate;
-	struct v4l2_ctrl *link_freq;
 	struct v4l2_ctrl *a_gain;
 	struct {
 		struct v4l2_ctrl *hflip;
@@ -371,8 +375,7 @@ static int ar0234_set_analog_gain(struct ar0234 *ar0234, u64 val)
 
 	if (actual_gain != val) {
 		__v4l2_ctrl_modify_range(ar0234->a_gain, AR0234_ANA_GAIN_MIN,
-					 AR0234_ANA_GAIN_MAX,
-					 AR0234_ANA_GAIN_STEP, actual_gain);
+					 AR0234_ANA_GAIN_MAX, 1, actual_gain);
 		__v4l2_ctrl_s_ctrl(ar0234->a_gain, actual_gain);
 	}
 
@@ -413,7 +416,7 @@ static int ar0234_set_ctrl(struct v4l2_ctrl *ctrl)
 			return ret;
 	}
 
-	if (pm_runtime_get_if_in_use(ar0234->dev) == 0)
+	if (!pm_runtime_get_if_in_use(ar0234->dev))
 		return 0;
 
 	switch (ctrl->id) {
@@ -435,18 +438,30 @@ static int ar0234_set_ctrl(struct v4l2_ctrl *ctrl)
 	case V4L2_CID_ANALOGUE_GAIN:
 		ret = ar0234_set_analog_gain(ar0234, ctrl->val);
 		break;
+	case V4L2_CID_HFLIP:
+	case V4L2_CID_VFLIP:
+		cci_write(ar0234->regmap, AR0234_REG_IMAGE_ORIENTATION,
+			  (ar0234->vflip->val << 1) | ar0234->hflip->val, &ret);
+		break;
+	case V4L2_CID_BLUE_BALANCE:
+		cci_write(ar0234->regmap, AR0234_REG_BLUE_GAIN,
+			  ctrl->val, &ret);
+		break;
+	case V4L2_CID_RED_BALANCE:
+		cci_write(ar0234->regmap, AR0234_REG_RED_GAIN,
+			  ctrl->val, &ret);
+		break;
 	case V4L2_CID_DIGITAL_GAIN:
 		cci_write(ar0234->regmap, AR0234_REG_GLOBAL_GAIN,
+			  ctrl->val, &ret);
+		break;
+	case V4L2_CID_BRIGHTNESS:
+		cci_write(ar0234->regmap, AR0234_REG_DATA_PEDESTAL,
 			  ctrl->val, &ret);
 		break;
 	case V4L2_CID_TEST_PATTERN:
 		cci_write(ar0234->regmap, AR0234_REG_TEST_PATTERN_MODE,
 			  ar0234_test_pattern_val[ctrl->val], &ret);
-		break;
-	case V4L2_CID_HFLIP:
-	case V4L2_CID_VFLIP:
-		cci_write(ar0234->regmap, AR0234_REG_IMAGE_ORIENTATION,
-			  (ar0234->vflip->val << 1) | ar0234->hflip->val, &ret);
 		break;
 	case V4L2_CID_TEST_PATTERN_RED:
 		cci_write(ar0234->regmap, AR0234_REG_TEST_DATA_RED,
@@ -500,7 +515,7 @@ static int ar0234_enum_frame_size(struct v4l2_subdev *sd,
 				  struct v4l2_subdev_state *sd_state,
 				  struct v4l2_subdev_frame_size_enum *fse)
 {
-	if (fse->index >= ARRAY_SIZE(ar0234_modes))
+	if (fse->index)
 		return -EINVAL;
 
 	fse->min_width = AR0234_MIN_CROP_WIDTH;
@@ -801,10 +816,6 @@ static int ar0234_enable_streams(struct v4l2_subdev *sd,
 		  ar0234->pll.op_bk.sys_clk_div, &ret);
 	cci_write(ar0234->regmap, AR0234_REG_OP_PIX_CLK_DIV,
 		  ar0234->pll.op_bk.pix_clk_div, &ret);
-	if (ret) {
-		dev_err(ar0234->dev, "Failed to setup PLL\n");
-		goto start_err;
-	}
 
 	cci_multi_reg_write(ar0234->regmap, ar0234_common_init,
 			    ARRAY_SIZE(ar0234_common_init), &ret);
@@ -832,10 +843,8 @@ static int ar0234_enable_streams(struct v4l2_subdev *sd,
 	cci_write(ar0234->regmap, AR0234_REG_X_ADDR_END, x_addr_end, &ret);
 	cci_write(ar0234->regmap, AR0234_REG_Y_ADDR_END, y_addr_end, &ret);
 
-	if (ret) {
-		dev_err(ar0234->dev, "Failed to setup sensor\n");
+	if (ret)
 		goto start_err;
-	}
 
 	ret = __v4l2_ctrl_handler_setup(ar0234->sd.ctrl_handler);
 
@@ -848,7 +857,7 @@ static int ar0234_enable_streams(struct v4l2_subdev *sd,
 start_err:
 	pm_runtime_put_autosuspend(ar0234->dev);
 
-	return ret;
+	return dev_err_probe(ar0234->dev, ret, "Failed to setup sensor\n");
 }
 
 static int ar0234_disable_streams(struct v4l2_subdev *sd,
@@ -923,9 +932,21 @@ static int ar0234_ctrls_init(struct ar0234 *ar0234)
 	if (ret)
 		return ret;
 
-	ret = v4l2_ctrl_handler_init(&ar0234->ctrls, 14);
+	ret = v4l2_ctrl_handler_init(&ar0234->ctrls, 17);
 	if (ret)
 		return ret;
+
+	ar0234->pixel_rate = v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops,
+					       V4L2_CID_PIXEL_RATE, 1,
+					       INT_MAX, 1, 1);
+
+	ar0234->link_freq =
+		v4l2_ctrl_new_int_menu(&ar0234->ctrls, &ar0234_ctrl_ops,
+				       V4L2_CID_LINK_FREQ,
+				       AR0234_LINK_FREQ_IDX_MAX - 1, 0,
+				       ar0234->link_freqs);
+	if (ar0234->link_freq)
+		ar0234->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
 	ar0234->hblank = v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops,
 					   V4L2_CID_HBLANK, 0,
@@ -940,27 +961,33 @@ static int ar0234_ctrls_init(struct ar0234 *ar0234)
 					     AR0234_EXPOSURE_MIN, U16_MAX,
 					     AR0234_EXPOSURE_STEP, 200);
 
-	ar0234->pixel_rate = v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops,
-					       V4L2_CID_PIXEL_RATE, 1,
-					       INT_MAX, 1, 1);
-
 	ar0234->a_gain = v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops,
 					   V4L2_CID_ANALOGUE_GAIN,
 					   AR0234_ANA_GAIN_MIN,
-					   AR0234_ANA_GAIN_MAX,
-					   AR0234_ANA_GAIN_STEP,
+					   AR0234_ANA_GAIN_MAX, 1,
 					   AR0234_ANA_GAIN_DEFAULT);
 
-	v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops,
-			  V4L2_CID_DIGITAL_GAIN, AR0234_DGTL_GAIN_MIN,
-			  AR0234_DGTL_GAIN_MAX, AR0234_DGTL_GAIN_STEP,
-			  AR0234_DGTL_GAIN_DEFAULT);
+	v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops, V4L2_CID_BRIGHTNESS,
+			  AR0234_DATA_PEDESTAL_MIN, AR0234_DATA_PEDESTAL_MAX, 1,
+			  AR0234_DATA_PEDESTAL_DEFAULT);
 
 	ar0234->hflip = v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops,
 					  V4L2_CID_HFLIP, 0, 1, 1, 0);
 	ar0234->vflip = v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops,
 					  V4L2_CID_VFLIP, 0, 1, 1, 0);
 	v4l2_ctrl_cluster(2, &ar0234->hflip);
+
+	v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops,
+			  V4L2_CID_BLUE_BALANCE, AR0234_GAIN_MIN,
+			  AR0234_GAIN_MAX, 1, AR0234_GAIN_DEFAULT);
+
+	v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops,
+			  V4L2_CID_RED_BALANCE, AR0234_GAIN_MIN,
+		   AR0234_GAIN_MAX, 1, AR0234_GAIN_DEFAULT);
+
+	v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops,
+			  V4L2_CID_DIGITAL_GAIN, AR0234_GAIN_MIN,
+		   AR0234_GAIN_MAX, 1, AR0234_GAIN_DEFAULT);
 
 	v4l2_ctrl_new_std_menu_items(&ar0234->ctrls, &ar0234_ctrl_ops,
 				     V4L2_CID_TEST_PATTERN,
@@ -975,14 +1002,6 @@ static int ar0234_ctrls_init(struct ar0234 *ar0234)
 				  AR0234_TESTP_COLOUR_STEP,
 				  AR0234_TESTP_COLOUR_MAX);
 	}
-
-	ar0234->link_freq =
-		v4l2_ctrl_new_int_menu(&ar0234->ctrls, &ar0234_ctrl_ops,
-				       V4L2_CID_LINK_FREQ,
-				       AR0234_LINK_FREQ_IDX_MAX - 1, 0,
-				       ar0234->link_freqs);
-	if (ar0234->link_freq)
-		ar0234->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
 	ret = v4l2_ctrl_new_fwnode_properties(&ar0234->ctrls, &ar0234_ctrl_ops,
 					      &props);
@@ -1019,7 +1038,7 @@ static int ar0234_parse_hw_config(struct ar0234 *ar0234)
 				     "Failed to get supplies\n");
 
 	ar0234->reset = devm_gpiod_get_optional(ar0234->dev, "reset",
-						GPIOD_OUT_HIGH);
+						GPIOD_OUT_LOW);
 	if (IS_ERR(ar0234->reset))
 		return dev_err_probe(ar0234->dev, PTR_ERR(ar0234->reset),
 				     "Failed to get reset GPIO\n");
@@ -1109,14 +1128,12 @@ static int ar0234_power_on(struct device *dev)
 
 	ret = regulator_bulk_enable(ARRAY_SIZE(ar0234->supplies),
 				    ar0234->supplies);
-	if (ret) {
-		dev_err(ar0234->dev, "Failed to enable regulators\n");
-		return ret;
-	}
+	if (ret)
+		return dev_err_probe(dev, ret, "Failed to enable regulators\n");
 
 	ret = clk_prepare_enable(ar0234->clk);
 	if (ret) {
-		dev_err(ar0234->dev, "Failed to enable clock\n");
+		dev_err(dev, "Failed to enable clock\n");
 		regulator_bulk_disable(ARRAY_SIZE(ar0234->supplies),
 				       ar0234->supplies);
 		return ret;
@@ -1185,7 +1202,7 @@ static int ar0234_probe(struct i2c_client *client)
 
 	ret = ar0234_power_on(dev);
 	if (ret)
-		goto err_subdev;
+		goto error_subdev;
 
 	pm_runtime_set_active(dev);
 	pm_runtime_get_noresume(dev);
@@ -1210,7 +1227,7 @@ static int ar0234_probe(struct i2c_client *client)
 
 	ret = ar0234_calculate_pll(ar0234, ar0234->mode);
 	if (ret) {
-		dev_err(ar0234->dev, "PLL calculations failed: %d\n", ret);
+		dev_err(dev, "PLL calculations failed: %d\n", ret);
 		goto error_pm;
 	}
 
@@ -1235,7 +1252,7 @@ static int ar0234_probe(struct i2c_client *client)
 
 	ret = v4l2_subdev_init_finalize(&ar0234->sd);
 	if (ret) {
-		dev_err(ar0234->dev, "Subdev init error\n");
+		dev_err(dev, "Subdev init error\n");
 		goto error_media;
 	}
 
@@ -1253,11 +1270,11 @@ error_media:
 	media_entity_cleanup(&ar0234->sd.entity);
 
 error_pm:
-	pm_runtime_disable(ar0234->dev);
-	pm_runtime_put_noidle(ar0234->dev);
-	ar0234_power_off(ar0234->dev);
+	pm_runtime_disable(dev);
+	pm_runtime_put_noidle(dev);
+	ar0234_power_off(dev);
 
-err_subdev:
+error_subdev:
 	ar0234_subdev_cleanup(ar0234);
 
 	return ret;
