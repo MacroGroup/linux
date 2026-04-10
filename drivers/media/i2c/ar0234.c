@@ -31,6 +31,17 @@
 
 #include "ccs-pll.h"
 
+#define AR0234_NATIVE_WIDTH				(1940U)
+#define AR0234_NATIVE_HEIGHT				(1220U)
+#define AR0234_PIXEL_ARRAY_LEFT				(8U)
+#define AR0234_PIXEL_ARRAY_TOP				(8U)
+#define AR0234_PIXEL_ARRAY_WIDTH			(1920U)
+#define AR0234_PIXEL_ARRAY_HEIGHT			(1200U)
+#define AR0234_MIN_CROP_WIDTH				(4U)
+#define AR0234_MIN_CROP_HEIGHT				(2U)
+#define AR0234_CROP_WIDTH_STEP				(4U)
+#define AR0234_CROP_HEIGHT_STEP				(2U)
+
 #define AR0234_REG_CHIP_VERSION				CCI_REG16(0x3000)
 #	define AR0234_CHIP_ID				(0x0a56)
 #	define AR0234_CHIP_ID_MONO			(0x1a56)
@@ -43,6 +54,8 @@
 #	define AR0234_VBLANK_MAX			(0xf000)
 #define AR0234_REG_LINE_LENGTH_PCK			CCI_REG16(0x300c)
 #	define AR0234_LINE_LENGTH_PCK_MIN		(612)
+#	define AR0234_HBLANK_MIN			\
+		(AR0234_LINE_LENGTH_PCK_MIN - AR0234_PIXEL_ARRAY_WIDTH / 4)
 #	define AR0234_HBLANK_MAX			(0xf000)
 #define AR0234_REG_REVISION_NUMBER			CCI_REG16(0x300e)
 #define AR0234_REG_COARSE_INTEGRATION_TIME		CCI_REG16(0x3012)
@@ -96,17 +109,6 @@
 #define AR0234_REG_COMPANDING				CCI_REG16(0x31d0)
 #	define COMPANDING_DPCM_EN			BIT(0)
 #define AR0234_REG_MIPI_CNTRL				CCI_REG16(0x3354)
-
-#define AR0234_NATIVE_WIDTH				(1940U)
-#define AR0234_NATIVE_HEIGHT				(1220U)
-#define AR0234_PIXEL_ARRAY_LEFT				(8U)
-#define AR0234_PIXEL_ARRAY_TOP				(8U)
-#define AR0234_PIXEL_ARRAY_WIDTH			(1920U)
-#define AR0234_PIXEL_ARRAY_HEIGHT			(1200U)
-#define AR0234_MIN_CROP_WIDTH				(4U)
-#define AR0234_MIN_CROP_HEIGHT				(2U)
-#define AR0234_CROP_WIDTH_STEP				(4U)
-#define AR0234_CROP_HEIGHT_STEP				(2U)
 
 static const struct cci_reg_sequence ar0234_common_init[] = {
 	{ AR0234_REG_FINE_INTEGRATION_TIME, 0 },
@@ -182,7 +184,7 @@ static const struct ar0234_mode ar0234_modes[] = {
 		.bpp_in = 10,
 		.bpp_out = 8,
 		.dpcm = COMPANDING_DPCM_EN,
-		.mipi_dt = MIPI_CSI2_DT_RAW10,
+		.mipi_dt = MIPI_CSI2_DT_RAW8,
 		.link_freq_index = AR0234_LINK_FREQ_IDX_BPP_8,
 		.code = {
 			[AR0234_VARIANT_COLOUR] =
@@ -192,7 +194,6 @@ static const struct ar0234_mode ar0234_modes[] = {
 };
 
 struct ar0234 {
-	struct device *dev;
 	struct clk *clk;
 	struct regmap *regmap;
 
@@ -219,7 +220,6 @@ struct ar0234 {
 	struct v4l2_ctrl *hblank;
 	struct v4l2_ctrl *vblank;
 	struct v4l2_ctrl *exposure;
-	struct v4l2_ctrl *a_gain;
 	struct {
 		struct v4l2_ctrl *hflip;
 		struct v4l2_ctrl *vflip;
@@ -289,19 +289,16 @@ static int ar0234_calculate_pll(struct ar0234 *ar0234,
 	pll.link_freq = ar0234->link_freqs[mode->link_freq_index] / 2;
 	pll.ext_clk_freq_hz = clk_get_rate(ar0234->clk);
 
-	ret = ccs_pll_calculate(ar0234->dev, &ar0234_pll_limits, &pll);
+	ret = ccs_pll_calculate(ar0234->sd.dev, &ar0234_pll_limits, &pll);
 	if (!ret)
 		ar0234->pll = pll;
 
 	return ret;
 }
 
-static u32 ar0234_calc_analog_gain(u32 req_gain_q6, u32 *reg_val)
+static u32 ar0234_calc_analog_gain(u32 req_gain_q6)
 {
-	u32 s, t;
-	u32 best_gain = 0;
-	u32 best_reg = 0;
-	u32 min_diff = U32_MAX;
+	u32 s, t, best = 0, min_diff = U32_MAX;
 	u32 coarse_mult, fine_gain_q6, total_gain_q6, diff;
 
 	for (s = 0; s <= 4; s++) {
@@ -329,15 +326,12 @@ static u32 ar0234_calc_analog_gain(u32 req_gain_q6, u32 *reg_val)
 
 			if (diff < min_diff) {
 				min_diff = diff;
-				best_gain = total_gain_q6;
-				best_reg = (s << 4) | t;
+				best = (s << 4) | t;
 			}
 		}
 	}
 
-	*reg_val = best_reg;
-
-	return best_gain;
+	return best;
 }
 
 static int ar0234_set_mfr_30ba(struct ar0234 *ar0234, u32 analog_reg_val)
@@ -363,18 +357,12 @@ static int ar0234_set_mfr_30ba(struct ar0234 *ar0234, u32 analog_reg_val)
 			 mfr_30ba_val, NULL);
 }
 
-static int ar0234_set_analog_gain(struct ar0234 *ar0234, u64 val)
+static int ar0234_set_analog_gain(struct ar0234 *ar0234, u32 val)
 {
-	u32 reg_val, actual_gain;
+	u32 reg_val;
 	int ret;
 
-	actual_gain = ar0234_calc_analog_gain(val, &reg_val);
-
-	if (actual_gain != val) {
-		__v4l2_ctrl_modify_range(ar0234->a_gain, AR0234_ANA_GAIN_MIN,
-					 AR0234_ANA_GAIN_MAX, 1, actual_gain);
-		__v4l2_ctrl_s_ctrl(ar0234->a_gain, actual_gain);
-	}
+	reg_val = ar0234_calc_analog_gain(val);
 
 	ret = cci_write(ar0234->regmap, AR0234_REG_GROUPED_PARAMETER_HOLD,
 			1, NULL);
@@ -416,10 +404,10 @@ static int ar0234_set_ctrl(struct v4l2_ctrl *ctrl)
 					       AR0234_EXPOSURE_STEP,
 					       exposure_val);
 		if (ret)
-			goto ctrl_unlock;
+			return ret;
 	}
 
-	if (!pm_runtime_get_if_in_use(ar0234->dev))
+	if (!pm_runtime_get_if_in_use(sd->dev))
 		return 0;
 
 	switch (ctrl->id) {
@@ -483,15 +471,12 @@ static int ar0234_set_ctrl(struct v4l2_ctrl *ctrl)
 			  ctrl->val, &ret);
 		break;
 	default:
-		dev_err(ar0234->dev, "Invalid control %d\n", ctrl->id);
+		dev_err(sd->dev, "Invalid control %d\n", ctrl->id);
 		ret = -EINVAL;
 		break;
 	}
 
-	pm_runtime_put_autosuspend(ar0234->dev);
-
-ctrl_unlock:
-	v4l2_subdev_unlock_state(state);
+	pm_runtime_put_autosuspend(sd->dev);
 
 	return ret;
 }
@@ -501,7 +486,7 @@ static const struct v4l2_ctrl_ops ar0234_ctrl_ops = {
 };
 
 static int ar0234_enum_mbus_code(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_state *state,
 				 struct v4l2_subdev_mbus_code_enum *code)
 {
 	struct ar0234 *ar0234 = to_ar0234(sd);
@@ -518,16 +503,16 @@ static int ar0234_enum_mbus_code(struct v4l2_subdev *sd,
 }
 
 static int ar0234_enum_frame_size(struct v4l2_subdev *sd,
-				  struct v4l2_subdev_state *sd_state,
+				  struct v4l2_subdev_state *state,
 				  struct v4l2_subdev_frame_size_enum *fse)
 {
 	if (fse->index)
 		return -EINVAL;
 
-	fse->min_width = AR0234_MIN_CROP_WIDTH;
-	fse->max_width = AR0234_PIXEL_ARRAY_WIDTH;
-	fse->min_height = AR0234_MIN_CROP_HEIGHT;
-	fse->max_height = AR0234_PIXEL_ARRAY_HEIGHT;
+	fse->min_width = AR0234_PIXEL_ARRAY_WIDTH;
+	fse->max_width = fse->min_width;
+	fse->min_height = AR0234_PIXEL_ARRAY_HEIGHT;
+	fse->max_height = fse->min_height;
 
 	return 0;
 }
@@ -546,29 +531,28 @@ static void ar0234_set_link_limits(struct ar0234 *ar0234)
 
 static void ar0234_set_framing_limits(struct ar0234 *ar0234, u32 width)
 {
-	int hblank, hblank_min;
+	int hblank;
 
-	__v4l2_ctrl_modify_range(ar0234->vblank, AR0234_FRAME_LENGTH_LINES_MIN,
-				 AR0234_VBLANK_MAX, 1,
-				 AR0234_FRAME_LENGTH_LINES_MIN);
 	__v4l2_ctrl_s_ctrl(ar0234->vblank, AR0234_FRAME_LENGTH_LINES_MIN);
 
 	hblank = AR0234_LINE_LENGTH_PCK_MIN - width / 4;
-	hblank_min = AR0234_LINE_LENGTH_PCK_MIN - AR0234_PIXEL_ARRAY_WIDTH / 4;
-	__v4l2_ctrl_modify_range(ar0234->hblank, hblank_min,
+	__v4l2_ctrl_modify_range(ar0234->hblank, AR0234_HBLANK_MIN,
 				 AR0234_HBLANK_MAX, 2, hblank);
 	__v4l2_ctrl_s_ctrl(ar0234->hblank, hblank);
 }
 
 static int ar0234_set_pad_format(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_state *state,
 				 struct v4l2_subdev_format *fmt)
 {
-	struct ar0234_mode const *mode = NULL;
+	struct ar0234_mode const *mode = &ar0234_modes[0];
 	struct ar0234 *ar0234 = to_ar0234(sd);
 	struct v4l2_rect *crop;
-	u32 width, height;
 	int i;
+
+	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE &&
+	    v4l2_subdev_is_streaming(sd))
+		return -EBUSY;
 
 	for (i = 0; i < ARRAY_SIZE(ar0234_modes); i++) {
 		if (!ar0234_modes[i].code[ar0234->variant])
@@ -578,62 +562,123 @@ static int ar0234_set_pad_format(struct v4l2_subdev *sd,
 			break;
 		}
 	}
-	if (!mode)
-		return -EINVAL;
 
-	width = round_down(fmt->format.width, AR0234_CROP_WIDTH_STEP);
-	width = clamp(width, AR0234_MIN_CROP_WIDTH, AR0234_PIXEL_ARRAY_WIDTH);
-	height = round_down(fmt->format.height, AR0234_CROP_HEIGHT_STEP);
-	height = clamp(height,
-		       AR0234_MIN_CROP_HEIGHT, AR0234_PIXEL_ARRAY_HEIGHT);
+	crop = v4l2_subdev_state_get_crop(state, fmt->pad);
 
-	fmt->format.width = width;
-	fmt->format.height = height;
+	fmt->format.width = crop->width;
+	fmt->format.height = crop->height;
+	fmt->format.code = mode->code[ar0234->variant];
 	fmt->format.field = V4L2_FIELD_NONE;
 	fmt->format.colorspace = V4L2_COLORSPACE_RAW;
 	fmt->format.ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
 	fmt->format.quantization = V4L2_QUANTIZATION_DEFAULT;
 	fmt->format.xfer_func = V4L2_XFER_FUNC_NONE;
 
-	crop = v4l2_subdev_state_get_crop(sd_state, fmt->pad);
+	*v4l2_subdev_state_get_format(state, fmt->pad) = fmt->format;
 
-	crop->width = width;
-	crop->height = height;
-
-	*v4l2_subdev_state_get_format(sd_state, fmt->pad) = fmt->format;
-
-	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
-		crop->left = (AR0234_NATIVE_WIDTH - width) / 2;
-		crop->top = (AR0234_NATIVE_HEIGHT - height) / 2;
-
-		return 0;
-	}
-
-	if (v4l2_subdev_is_streaming(sd))
-		return -EBUSY;
-
-	if (ar0234->mode != mode) {
+	if (ar0234->mode != mode && fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE) {
 		int ret = ar0234_calculate_pll(ar0234, mode);
 
 		if (ret) {
-			dev_err(ar0234->dev,
-				"PLL recalculations failed: %d\n", ret);
-			return ret;
+			dev_err(sd->dev, "PLL recalculation failed: %d\n", ret);
+			return -EINVAL;
 		}
 
 		ar0234->mode = mode;
 
 		ar0234_set_link_limits(ar0234);
+		ar0234_set_framing_limits(ar0234, crop->width);
 	}
 
-	crop->left = min_t(u32, crop->left, AR0234_PIXEL_ARRAY_LEFT +
-			   AR0234_PIXEL_ARRAY_WIDTH - width);
-	crop->top = min_t(u32, crop->top, AR0234_PIXEL_ARRAY_TOP +
-			  AR0234_PIXEL_ARRAY_HEIGHT - height);
-	crop->left = max(crop->left, AR0234_PIXEL_ARRAY_LEFT);
-	crop->top = max(crop->top, AR0234_PIXEL_ARRAY_TOP);
+	return 0;
+}
 
-	ar0234_set_framing_limits(ar0234, crop->width);
+static int ar0234_get_selection(struct v4l2_subdev *sd,
+				struct v4l2_subdev_state *state,
+				struct v4l2_subdev_selection *sel)
+{
+	switch (sel->target) {
+	case V4L2_SEL_TGT_CROP:
+		sel->r = *v4l2_subdev_state_get_crop(state, sel->pad);
+		break;
+	case V4L2_SEL_TGT_CROP_DEFAULT:
+	case V4L2_SEL_TGT_CROP_BOUNDS:
+		sel->r.left = AR0234_PIXEL_ARRAY_LEFT;
+		sel->r.top = AR0234_PIXEL_ARRAY_TOP;
+		sel->r.width = AR0234_PIXEL_ARRAY_WIDTH;
+		sel->r.height = AR0234_PIXEL_ARRAY_HEIGHT;
+		break;
+	case V4L2_SEL_TGT_NATIVE_SIZE:
+		sel->r.top = 0;
+		sel->r.left = 0;
+		sel->r.width = AR0234_NATIVE_WIDTH;
+		sel->r.height = AR0234_NATIVE_HEIGHT;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int ar0234_set_selection(struct v4l2_subdev *sd,
+				struct v4l2_subdev_state *state,
+				struct v4l2_subdev_selection *sel)
+{
+	struct ar0234 *ar0234 = to_ar0234(sd);
+	struct v4l2_rect *crop;
+	struct v4l2_rect rect;
+
+	if (sel->which == V4L2_SUBDEV_FORMAT_ACTIVE &&
+		v4l2_subdev_is_streaming(sd))
+		return -EBUSY;
+
+	if (sel->target != V4L2_SEL_TGT_CROP)
+		return -EINVAL;
+
+	/* Align the requested rectangle to the sensor's cropping granularity */
+	rect.left = round_up(sel->r.left, AR0234_CROP_WIDTH_STEP);
+	rect.top = round_up(sel->r.top, AR0234_CROP_HEIGHT_STEP);
+	rect.width = round_down(sel->r.width, AR0234_CROP_WIDTH_STEP);
+	rect.height = round_down(sel->r.height, AR0234_CROP_HEIGHT_STEP);
+
+	/* Clamp the top-left corner so that the whole rectangle stays */
+	/* inside the active pixel array */
+	rect.left =
+		clamp_t(u32, rect.left, AR0234_PIXEL_ARRAY_LEFT,
+			AR0234_PIXEL_ARRAY_LEFT + AR0234_PIXEL_ARRAY_WIDTH -
+			rect.width);
+	rect.top =
+		clamp_t(u32, rect.top, AR0234_PIXEL_ARRAY_TOP,
+			AR0234_PIXEL_ARRAY_TOP + AR0234_PIXEL_ARRAY_HEIGHT -
+			rect.height);
+
+	/* Clamp width and height to the allowed minima and to the */
+	/* remaining space after fixing the top-left corner */
+	rect.width =
+		clamp_t(u32, rect.width, AR0234_MIN_CROP_WIDTH,
+			AR0234_PIXEL_ARRAY_LEFT + AR0234_PIXEL_ARRAY_WIDTH -
+			rect.left);
+	rect.height =
+		clamp_t(u32, rect.height, AR0234_MIN_CROP_HEIGHT,
+			AR0234_PIXEL_ARRAY_TOP + AR0234_PIXEL_ARRAY_HEIGHT -
+			rect.top);
+
+	crop = v4l2_subdev_state_get_crop(state, sel->pad);
+
+	if (rect.width != crop->width || rect.height != crop->height) {
+		struct v4l2_mbus_framefmt *format;
+
+		format = v4l2_subdev_state_get_format(state, sel->pad);
+		format->width = rect.width;
+		format->height = rect.height;
+	}
+
+	*crop = rect;
+	sel->r = rect;
+
+	if (sel->which == V4L2_SUBDEV_FORMAT_ACTIVE)
+		ar0234_set_framing_limits(ar0234, crop->width);
 
 	return 0;
 }
@@ -641,137 +686,22 @@ static int ar0234_set_pad_format(struct v4l2_subdev *sd,
 static int ar0234_init_state(struct v4l2_subdev *sd,
 			     struct v4l2_subdev_state *state)
 {
-	struct ar0234 *ar0234 = to_ar0234(sd);
-	struct v4l2_subdev_format fmt = {
-		.pad = 0,
-		.which = V4L2_SUBDEV_FORMAT_TRY,
+	struct v4l2_subdev_selection sel = {
+		.target = V4L2_SEL_TGT_CROP,
+		.r.left = AR0234_PIXEL_ARRAY_LEFT,
+		.r.top = AR0234_PIXEL_ARRAY_TOP,
+		.r.width = AR0234_PIXEL_ARRAY_WIDTH,
+		.r.height = AR0234_PIXEL_ARRAY_HEIGHT,
+	};
+	struct v4l2_subdev_format format = {
 		.format = {
 			.width = AR0234_PIXEL_ARRAY_WIDTH,
 			.height = AR0234_PIXEL_ARRAY_HEIGHT,
-			.code = ar0234->mode->code[ar0234->variant],
 		},
 	};
-	struct v4l2_rect *crop = v4l2_subdev_state_get_crop(state, fmt.pad);
 
-	crop->left = AR0234_PIXEL_ARRAY_LEFT;
-	crop->top = AR0234_PIXEL_ARRAY_TOP;
-	crop->width = AR0234_PIXEL_ARRAY_WIDTH;
-	crop->height = AR0234_PIXEL_ARRAY_HEIGHT;
-
-	return ar0234_set_pad_format(sd, state, &fmt);
-}
-
-static int ar0234_get_selection(struct v4l2_subdev *sd,
-				struct v4l2_subdev_state *sd_state,
-				struct v4l2_subdev_selection *sel)
-{
-	switch (sel->target) {
-	case V4L2_SEL_TGT_CROP:
-		sel->r = *v4l2_subdev_state_get_crop(sd_state, sel->pad);
-
-		return 0;
-	case V4L2_SEL_TGT_CROP_DEFAULT:
-	case V4L2_SEL_TGT_CROP_BOUNDS:
-		sel->r.left = AR0234_PIXEL_ARRAY_LEFT;
-		sel->r.top = AR0234_PIXEL_ARRAY_TOP;
-		sel->r.width = AR0234_PIXEL_ARRAY_WIDTH;
-		sel->r.height = AR0234_PIXEL_ARRAY_HEIGHT;
-
-		return 0;
-	case V4L2_SEL_TGT_NATIVE_SIZE:
-		sel->r.top = 0;
-		sel->r.left = 0;
-		sel->r.width = AR0234_NATIVE_WIDTH;
-		sel->r.height = AR0234_NATIVE_HEIGHT;
-
-		return 0;
-	}
-
-	return -EINVAL;
-}
-
-static int ar0234_set_selection(struct v4l2_subdev *sd,
-				struct v4l2_subdev_state *sd_state,
-				struct v4l2_subdev_selection *sel)
-{
-	struct ar0234 *ar0234 = to_ar0234(sd);
-	struct v4l2_mbus_framefmt *fmt;
-	struct v4l2_rect rect = sel->r;
-	struct v4l2_rect *crop;
-	u32 max_left, max_top;
-
-	if (sel->target != V4L2_SEL_TGT_CROP)
-		return -EINVAL;
-
-	max_left = AR0234_PIXEL_ARRAY_LEFT + AR0234_PIXEL_ARRAY_WIDTH -
-		   AR0234_MIN_CROP_WIDTH;
-	max_top = AR0234_PIXEL_ARRAY_TOP + AR0234_PIXEL_ARRAY_HEIGHT -
-		  AR0234_MIN_CROP_HEIGHT;
-
-	rect.left = clamp_t(u32, rect.left, AR0234_PIXEL_ARRAY_LEFT, max_left);
-	rect.top = clamp_t(u32, rect.top, AR0234_PIXEL_ARRAY_TOP, max_top);
-
-	rect.width =
-		clamp_t(u32, round_down(rect.width, AR0234_CROP_WIDTH_STEP),
-			AR0234_MIN_CROP_WIDTH, AR0234_PIXEL_ARRAY_WIDTH);
-	rect.height =
-		clamp_t(u32, round_down(rect.height, AR0234_CROP_HEIGHT_STEP),
-			AR0234_MIN_CROP_HEIGHT, AR0234_PIXEL_ARRAY_HEIGHT);
-
-	if (rect.left + rect.width - 1 >
-	    AR0234_PIXEL_ARRAY_LEFT + AR0234_PIXEL_ARRAY_WIDTH - 1)
-		rect.left = AR0234_PIXEL_ARRAY_LEFT +
-			    AR0234_PIXEL_ARRAY_WIDTH - rect.width;
-	if (rect.top + rect.height - 1 >
-	    AR0234_PIXEL_ARRAY_TOP + AR0234_PIXEL_ARRAY_HEIGHT - 1)
-		rect.top = AR0234_PIXEL_ARRAY_TOP +
-			   AR0234_PIXEL_ARRAY_HEIGHT - rect.height;
-
-	if (sel->flags & V4L2_SEL_FLAG_GE) {
-		if (rect.width < sel->r.width) {
-			u32 new_width = rect.width + AR0234_CROP_WIDTH_STEP;
-
-			if (new_width <= AR0234_PIXEL_ARRAY_WIDTH)
-				rect.width = new_width;
-		}
-		if (rect.height < sel->r.height) {
-			u32 new_height = rect.height + AR0234_CROP_HEIGHT_STEP;
-
-			if (new_height <= AR0234_PIXEL_ARRAY_HEIGHT)
-				rect.height = new_height;
-		}
-	}
-
-	if (sel->flags & V4L2_SEL_FLAG_LE) {
-		if (rect.width > sel->r.width && rect.width >=
-		    AR0234_MIN_CROP_WIDTH + AR0234_CROP_WIDTH_STEP)
-			rect.width -= AR0234_CROP_WIDTH_STEP;
-		if (rect.height > sel->r.height && rect.height >=
-		    AR0234_MIN_CROP_HEIGHT + AR0234_CROP_HEIGHT_STEP)
-			rect.height -= AR0234_CROP_HEIGHT_STEP;
-	}
-
-	if (rect.width < AR0234_MIN_CROP_WIDTH ||
-	    rect.height < AR0234_MIN_CROP_HEIGHT)
-		return -EINVAL;
-
-	crop = v4l2_subdev_state_get_crop(sd_state, sel->pad);
-	fmt = v4l2_subdev_state_get_format(sd_state, sel->pad);
-
-	*crop = rect;
-
-	fmt->width = rect.width;
-	fmt->height = rect.height;
-
-	if (sel->which == V4L2_SUBDEV_FORMAT_TRY)
-		return 0;
-
-	if (v4l2_subdev_is_streaming(sd))
-		return -EBUSY;
-
-	ar0234_set_framing_limits(ar0234, crop->width);
-
-	sel->r = rect;
+	ar0234_set_selection(sd, state, &sel);
+	ar0234_set_pad_format(sd, state, &format);
 
 	return 0;
 }
@@ -787,7 +717,7 @@ static int ar0234_enable_streams(struct v4l2_subdev *sd,
 	if (streams_mask != 1)
 		return -EINVAL;
 
-	ret = pm_runtime_resume_and_get(ar0234->dev);
+	ret = pm_runtime_resume_and_get(sd->dev);
 	if (ret)
 		return ret;
 
@@ -840,9 +770,9 @@ static int ar0234_enable_streams(struct v4l2_subdev *sd,
 		return 0;
 
 start_err:
-	pm_runtime_put_autosuspend(ar0234->dev);
+	pm_runtime_put_autosuspend(sd->dev);
 
-	dev_err(ar0234->dev, "Failed to setup sensor\n");
+	dev_err(sd->dev, "Failed to setup sensor\n");
 
 	return ret;
 }
@@ -859,7 +789,7 @@ static int ar0234_disable_streams(struct v4l2_subdev *sd,
 
 	ret = cci_write(ar0234->regmap, AR0234_REG_MODE_SELECT, 0, NULL);
 
-	pm_runtime_put_autosuspend(ar0234->dev);
+	pm_runtime_put_autosuspend(sd->dev);
 
 	return ret;
 }
@@ -927,23 +857,24 @@ static int ar0234_ctrls_init(struct ar0234 *ar0234)
 		ar0234->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
 	ar0234->hblank = v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops,
-					   V4L2_CID_HBLANK, 0,
-					   AR0234_HBLANK_MAX, 2, 0);
+					   V4L2_CID_HBLANK, AR0234_HBLANK_MIN,
+					   AR0234_HBLANK_MAX, 2,
+					   AR0234_HBLANK_MIN);
 
 	ar0234->vblank = v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops,
-					   V4L2_CID_VBLANK, 0,
-					   AR0234_VBLANK_MAX, 1, 0);
+					   V4L2_CID_VBLANK,
+					   AR0234_FRAME_LENGTH_LINES_MIN,
+					   AR0234_VBLANK_MAX, 1,
+					   AR0234_FRAME_LENGTH_LINES_MIN);
 
 	ar0234->exposure = v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops,
 					     V4L2_CID_EXPOSURE,
 					     AR0234_EXPOSURE_MIN, U16_MAX,
 					     AR0234_EXPOSURE_STEP, 200);
 
-	ar0234->a_gain = v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops,
-					   V4L2_CID_ANALOGUE_GAIN,
-					   AR0234_ANA_GAIN_MIN,
-					   AR0234_ANA_GAIN_MAX, 1,
-					   AR0234_ANA_GAIN_DEFAULT);
+	v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops,
+			  V4L2_CID_ANALOGUE_GAIN, AR0234_ANA_GAIN_MIN,
+			  AR0234_ANA_GAIN_MAX, 1, AR0234_ANA_GAIN_DEFAULT);
 
 	v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops, V4L2_CID_BRIGHTNESS,
 			  AR0234_DATA_PEDESTAL_MIN, AR0234_DATA_PEDESTAL_MAX, 1,
@@ -981,7 +912,7 @@ static int ar0234_ctrls_init(struct ar0234 *ar0234)
 				  AR0234_TESTP_COLOUR_MAX);
 	}
 
-	ret = v4l2_fwnode_device_parse(ar0234->dev, &props);
+	ret = v4l2_fwnode_device_parse(ar0234->sd.dev, &props);
 	if (ret)
 		return ret;
 
@@ -1010,25 +941,25 @@ static int ar0234_parse_hw_config(struct ar0234 *ar0234)
 	for (i = 0; i < ARRAY_SIZE(ar0234->supplies); i++)
 		ar0234->supplies[i].supply = ar0234_supply_names[i];
 
-	ret = devm_regulator_bulk_get(ar0234->dev,
+	ret = devm_regulator_bulk_get(ar0234->sd.dev,
 				      ARRAY_SIZE(ar0234->supplies),
 				      ar0234->supplies);
 	if (ret)
-		return dev_err_probe(ar0234->dev, ret,
+		return dev_err_probe(ar0234->sd.dev, ret,
 				     "Failed to get supplies\n");
 
-	ar0234->reset = devm_gpiod_get_optional(ar0234->dev, "reset",
+	ar0234->reset = devm_gpiod_get_optional(ar0234->sd.dev, "reset",
 						GPIOD_OUT_HIGH);
 	if (IS_ERR(ar0234->reset))
-		return dev_err_probe(ar0234->dev, PTR_ERR(ar0234->reset),
+		return dev_err_probe(ar0234->sd.dev, PTR_ERR(ar0234->reset),
 				     "Failed to get reset GPIO\n");
 
-	ar0234->clk = devm_v4l2_sensor_clk_get(ar0234->dev, NULL);
+	ar0234->clk = devm_v4l2_sensor_clk_get(ar0234->sd.dev, NULL);
 	if (IS_ERR(ar0234->clk))
-		return dev_err_probe(ar0234->dev, PTR_ERR(ar0234->clk),
+		return dev_err_probe(ar0234->sd.dev, PTR_ERR(ar0234->clk),
 				     "Failed to get clock\n");
 
-	ep = fwnode_graph_get_next_endpoint(dev_fwnode(ar0234->dev), NULL);
+	ep = fwnode_graph_get_next_endpoint(dev_fwnode(ar0234->sd.dev), NULL);
 	if (!ep)
 		return -ENXIO;
 
@@ -1043,14 +974,14 @@ static int ar0234_parse_hw_config(struct ar0234 *ar0234)
 		ar0234->num_data_lanes = bus_cfg.bus.mipi_csi2.num_data_lanes;
 		break;
 	default:
-		ret = dev_err_probe(ar0234->dev, -EINVAL,
+		ret = dev_err_probe(ar0234->sd.dev, -EINVAL,
 				    "Invalid number of CSI2 data lanes %d\n",
 		      bus_cfg.bus.mipi_csi2.num_data_lanes);
 		goto done_endpoint_free;
 	}
 
 	if (bus_cfg.nr_of_link_frequencies != AR0234_LINK_FREQ_IDX_MAX) {
-		ret = dev_err_probe(ar0234->dev, -EINVAL,
+		ret = dev_err_probe(ar0234->sd.dev, -EINVAL,
 				    "Invalid number of link freq items %d\n",
 				    bus_cfg.nr_of_link_frequencies);
 		goto done_endpoint_free;
@@ -1060,7 +991,7 @@ static int ar0234_parse_hw_config(struct ar0234 *ar0234)
 		s64 freq = bus_cfg.link_frequencies[i];
 
 		if (freq < 360000000LL || freq > 450000000LL) {
-			ret = dev_err_probe(ar0234->dev, -EINVAL,
+			ret = dev_err_probe(ar0234->sd.dev, -EINVAL,
 					    "Invalid link frequency %lli\n",
 					    freq);
 			goto done_endpoint_free;
@@ -1083,7 +1014,7 @@ static int ar0234_identify_module(struct ar0234 *ar0234)
 	ret = cci_read(ar0234->regmap, AR0234_REG_CHIP_VERSION, &id, NULL);
 	ret = cci_read(ar0234->regmap, AR0234_REG_REVISION_NUMBER, &rev, &ret);
 	if (ret)
-		return dev_err_probe(ar0234->dev, ret,
+		return dev_err_probe(ar0234->sd.dev, ret,
 				     "Failed to read chip id\n");
 
 	if (id == AR0234_CHIP_ID_MONO)
@@ -1091,10 +1022,10 @@ static int ar0234_identify_module(struct ar0234 *ar0234)
 	else if (id == AR0234_CHIP_ID)
 		ar0234->variant = AR0234_VARIANT_COLOUR;
 	else
-		return dev_err_probe(ar0234->dev, -ENODEV,
+		return dev_err_probe(ar0234->sd.dev, -ENODEV,
 				     "Invalid chip id: 0x%04x\n", (u16)id);
 
-	dev_info(ar0234->dev, "Success reading chip id: 0x%04x, Rev.%lld\n",
+	dev_info(ar0234->sd.dev, "Success reading chip id: 0x%04x, Rev.%lld\n",
 		 (u16)id, (rev >> 12) & 0xf);
 
 	return ret;
@@ -1174,17 +1105,15 @@ static int ar0234_probe(struct i2c_client *client)
 	if (!ar0234)
 		return -ENOMEM;
 
-	ar0234->dev = dev;
-
 	ar0234->regmap = devm_cci_regmap_init_i2c(client, 16);
 	if (IS_ERR(ar0234->regmap))
 		return PTR_ERR(ar0234->regmap);
 
+	v4l2_i2c_subdev_init(&ar0234->sd, client, &ar0234_subdev_ops);
+
 	ret = ar0234_parse_hw_config(ar0234);
 	if (ret)
-		return ret;
-
-	v4l2_i2c_subdev_init(&ar0234->sd, client, &ar0234_subdev_ops);
+		goto error_subdev;
 
 	ret = ar0234_power_on(dev);
 	if (ret)
@@ -1224,8 +1153,6 @@ static int ar0234_probe(struct i2c_client *client)
 		goto error_pm;
 	}
 
-	ar0234->sd.state_lock = ar0234->ctrls.lock;
-
 	ret = v4l2_subdev_init_finalize(&ar0234->sd);
 	if (ret) {
 		dev_err_probe(dev, ret, "Subdev init error\n");
@@ -1235,6 +1162,8 @@ static int ar0234_probe(struct i2c_client *client)
 	ret = ar0234_ctrls_init(ar0234);
 	if (ret)
 		goto error_media;
+
+	ar0234->sd.state_lock = ar0234->ctrls.lock;
 
 	ret = v4l2_async_register_subdev_sensor(&ar0234->sd);
 	if (ret) {
