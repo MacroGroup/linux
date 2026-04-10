@@ -630,7 +630,7 @@ static int ar0234_set_selection(struct v4l2_subdev *sd,
 	struct v4l2_rect rect;
 
 	if (sel->which == V4L2_SUBDEV_FORMAT_ACTIVE &&
-		v4l2_subdev_is_streaming(sd))
+	    v4l2_subdev_is_streaming(sd))
 		return -EBUSY;
 
 	if (sel->target != V4L2_SEL_TGT_CROP)
