@@ -50,7 +50,9 @@ enum {
 };
 
 #define IMX662_WINMODE				CCI_REG8(0x3018)
+#define IMX662_CFMODE				CCI_REG8(0x3019)
 #define IMX662_WDMODE				CCI_REG8(0x301a)
+#define IMX662_ADDMODE				CCI_REG8(0x301b)
 #define IMX662_THIN_V_EN			CCI_REG8(0x301c)
 #define IMX662_VCMODE				CCI_REG8(0x301e)
 #define IMX662_HREVERSE				CCI_REG8(0x3020)
@@ -132,7 +134,6 @@ struct imx662_format {
 };
 
 struct imx662 {
-	struct device *dev;
 	struct clk *clk;
 	struct regmap *regmap;
 
@@ -156,11 +157,13 @@ struct imx662 {
 
 	struct v4l2_ctrl_handler ctrls;
 
-	struct v4l2_ctrl *hcg;
+	struct {
+		struct v4l2_ctrl *hcg;
+		struct v4l2_ctrl *gain;
+	};
 	struct v4l2_ctrl *hblank;
 	struct v4l2_ctrl *vblank;
 	struct v4l2_ctrl *exposure;
-	struct v4l2_ctrl *gain;
 };
 
 static inline struct imx662 *to_imx662(struct v4l2_subdev *_sd)
@@ -170,6 +173,7 @@ static inline struct imx662 *to_imx662(struct v4l2_subdev *_sd)
 
 static const struct cci_reg_sequence imx662_regs_common[] = {
 	{ IMX662_WINMODE, 0x04 },
+	{ IMX662_ADDMODE, 0x00 },
 	{ IMX662_VCMODE, 0x01 },
 	{ IMX662_SHR1, IMX662_SHR1_DEF },
 	{ IMX662_RHS1, IMX662_RHS1_DEF },
@@ -203,6 +207,7 @@ static const struct cci_reg_sequence imx662_regs_hdr_dol2[] = {
 	{ IMX662_THIN_V_EN, 0x01 },
 	{ IMX662_FDG_SEL0, 0x02 },
 	{ IMX662_FDG_SEL1, 0x02 },
+	{ IMX662_EXP_GAIN, 0x00 },
 	{ IMX662_GAIN_PGC_FIDMD, 0x00 },
 };
 
@@ -219,8 +224,9 @@ static const s64 imx662_link_freqs[] = {
 
 static const char * const imx662_hdr_menu[] = {
 	[IMX662_HDR_OFF] = "No HDR",
-	[IMX662_HDR_CLRHDR] = "Clear HDR",
-	[IMX662_HDR_CLRHDR_DOL2] = "Clear HDR + DOL 2 Frame",
+	/* These modes are not completed yet */
+	/* [IMX662_HDR_CLRHDR] = "Clear HDR", */
+	/* [IMX662_HDR_CLRHDR_DOL2] = "Clear HDR + DOL 2 Frame", */
 };
 
 static const struct imx662_format imx662_formats[] = {
@@ -363,9 +369,9 @@ static void imx662_blank_update(struct imx662 *imx662, u32 width, u32 height)
 	const s64 xhs = (imx662->hdr == IMX662_HDR_OFF) ? 1250LL : 2500LL;
 	s64 hblank_min, hblank_max, vblank_min, vblank_max;
 
-	hblank_min = imx662_get_hmax_min(imx662) - width;
+	hblank_min = imx662_get_hmax_min(imx662) - IMX662_PIXEL_ARRAY_WIDTH;
 	hblank_max = IMX662_HMAX_MAX - width;
-	vblank_min = xhs - height;
+	vblank_min = xhs - IMX662_PIXEL_ARRAY_HEIGHT;
 	vblank_max = IMX662_VMAX_MAX - height;
 
 	__v4l2_ctrl_modify_range(imx662->hblank, hblank_min, hblank_max,
@@ -395,10 +401,8 @@ static int imx662_set_ctrl(struct v4l2_ctrl *ctrl)
 		imx662_exposure_update(imx662, crop->height);
 		break;
 	case V4L2_CID_HDR_SENSOR_MODE:
-		if (v4l2_subdev_is_streaming(sd)) {
-			ret = -EBUSY;
-			goto ctrl_unlock;
-		}
+		if (v4l2_subdev_is_streaming(sd))
+			return -EBUSY;
 
 		imx662->hdr = ctrl->val;
 		v4l2_ctrl_activate(imx662->hcg,
@@ -407,7 +411,7 @@ static int imx662_set_ctrl(struct v4l2_ctrl *ctrl)
 		imx662_blank_update(imx662, crop->width, crop->height);
 		imx662_exposure_update(imx662, crop->height);
 
-		goto ctrl_unlock;
+		return 0;
 	case V4L2_CID_IMX662_GAIN_HCG:
 		imx662_gain_update(imx662);
 		break;
@@ -415,8 +419,8 @@ static int imx662_set_ctrl(struct v4l2_ctrl *ctrl)
 		break;
 	}
 
-	if (!pm_runtime_get_if_in_use(imx662->dev))
-		goto ctrl_unlock;
+	if (!pm_runtime_get_if_in_use(sd->dev))
+		return 0;
 
 	switch (ctrl->id) {
 	case V4L2_CID_HBLANK:
@@ -451,15 +455,12 @@ static int imx662_set_ctrl(struct v4l2_ctrl *ctrl)
 		cci_write(imx662->regmap, IMX662_BLKLEVEL, ctrl->val, &ret);
 		break;
 	default:
-		dev_err(imx662->dev, "Invalid control %d\n", ctrl->id);
+		dev_err(sd->dev, "Invalid control %d\n", ctrl->id);
 		ret = -EINVAL;
 		break;
 	}
 
-	pm_runtime_put_autosuspend(imx662->dev);
-
-ctrl_unlock:
-	v4l2_subdev_unlock_state(state);
+	pm_runtime_put_autosuspend(sd->dev);
 
 	return ret;
 }
@@ -469,7 +470,7 @@ static const struct v4l2_ctrl_ops imx662_ctrl_ops = {
 };
 
 static int imx662_enum_mbus_code(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_state *state,
 				 struct v4l2_subdev_mbus_code_enum *code)
 {
 	struct imx662 *imx662 = to_imx662(sd);
@@ -483,29 +484,32 @@ static int imx662_enum_mbus_code(struct v4l2_subdev *sd,
 }
 
 static int imx662_enum_frame_size(struct v4l2_subdev *sd,
-				  struct v4l2_subdev_state *sd_state,
+				  struct v4l2_subdev_state *state,
 				  struct v4l2_subdev_frame_size_enum *fse)
 {
 	if (fse->index)
 		return -EINVAL;
 
-	fse->min_width = IMX662_MIN_CROP_WIDTH;
-	fse->max_width = IMX662_PIXEL_ARRAY_WIDTH;
-	fse->min_height = IMX662_MIN_CROP_HEIGHT;
-	fse->max_height = IMX662_PIXEL_ARRAY_HEIGHT;
+	fse->min_width = IMX662_PIXEL_ARRAY_WIDTH;
+	fse->max_width = fse->min_width;
+	fse->min_height = IMX662_PIXEL_ARRAY_HEIGHT;
+	fse->max_height = fse->min_height;
 
 	return 0;
 }
 
 static int imx662_set_pad_format(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_state *state,
 				 struct v4l2_subdev_format *fmt)
 {
-	const struct imx662_format *format = NULL;
+	const struct imx662_format *format = &imx662_formats[0];
 	struct imx662 *imx662 = to_imx662(sd);
 	struct v4l2_rect *crop;
-	u32 width, height;
 	int i;
+
+	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE &&
+	    v4l2_subdev_is_streaming(sd))
+		return -EBUSY;
 
 	for (i = 0; i < ARRAY_SIZE(imx662_formats); i++) {
 		if (imx662_formats[i].code[imx662->variant] ==
@@ -514,174 +518,118 @@ static int imx662_set_pad_format(struct v4l2_subdev *sd,
 			break;
 		}
 	}
-	if (!format)
-		return -EINVAL;
 
-	width = round_down(fmt->format.width, IMX662_CROP_WIDTH_STEP);
-	width = clamp(width, IMX662_MIN_CROP_WIDTH, IMX662_PIXEL_ARRAY_WIDTH);
-	height = round_down(fmt->format.height, IMX662_CROP_HEIGHT_STEP);
-	height = clamp(height,
-		       IMX662_MIN_CROP_HEIGHT, IMX662_PIXEL_ARRAY_HEIGHT);
+	crop = v4l2_subdev_state_get_crop(state, fmt->pad);
 
-	fmt->format.width = width;
-	fmt->format.height = height;
+	fmt->format.width = crop->width;
+	fmt->format.height = crop->height;
+	fmt->format.code = format->code[imx662->variant];
 	fmt->format.field = V4L2_FIELD_NONE;
 	fmt->format.colorspace = V4L2_COLORSPACE_RAW;
 	fmt->format.ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
 	fmt->format.quantization = V4L2_QUANTIZATION_DEFAULT;
 	fmt->format.xfer_func = V4L2_XFER_FUNC_NONE;
 
-	crop = v4l2_subdev_state_get_crop(sd_state, fmt->pad);
+	*v4l2_subdev_state_get_format(state, fmt->pad) = fmt->format;
 
-	crop->width = width;
-	crop->height = height;
+	if (imx662->format != format &&
+	    fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE) {
+		imx662->format = format;
 
-	*v4l2_subdev_state_get_format(sd_state, fmt->pad) = fmt->format;
-
-	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
-		crop->left = (IMX662_NATIVE_WIDTH - width) / 2;
-		crop->top = (IMX662_NATIVE_HEIGHT - height) / 2;
-
-		return 0;
+		imx662_blank_update(imx662, crop->width, crop->height);
 	}
-
-	if (v4l2_subdev_is_streaming(sd))
-		return -EBUSY;
-
-	imx662->format = format;
-
-	crop->left = min_t(u32, crop->left, IMX662_PIXEL_ARRAY_LEFT +
-			   IMX662_PIXEL_ARRAY_WIDTH - width);
-	crop->top = min_t(u32, crop->top, IMX662_PIXEL_ARRAY_TOP +
-			  IMX662_PIXEL_ARRAY_HEIGHT - height);
-	crop->left = max(crop->left, IMX662_PIXEL_ARRAY_LEFT);
-	crop->top = max(crop->top, IMX662_PIXEL_ARRAY_TOP);
-
-	imx662_blank_update(imx662, width, height);
-
-	imx662_exposure_update(imx662, height);
 
 	return 0;
 }
 
 static int imx662_get_selection(struct v4l2_subdev *sd,
-				struct v4l2_subdev_state *sd_state,
+				struct v4l2_subdev_state *state,
 				struct v4l2_subdev_selection *sel)
 {
 	switch (sel->target) {
 	case V4L2_SEL_TGT_CROP:
-		sel->r = *v4l2_subdev_state_get_crop(sd_state, sel->pad);
-
-		return 0;
+		sel->r = *v4l2_subdev_state_get_crop(state, sel->pad);
+		break;
 	case V4L2_SEL_TGT_CROP_DEFAULT:
 	case V4L2_SEL_TGT_CROP_BOUNDS:
 		sel->r.top = IMX662_PIXEL_ARRAY_TOP;
 		sel->r.left = IMX662_PIXEL_ARRAY_LEFT;
 		sel->r.width = IMX662_PIXEL_ARRAY_WIDTH;
 		sel->r.height = IMX662_PIXEL_ARRAY_HEIGHT;
-
-		return 0;
+		break;
 	case V4L2_SEL_TGT_NATIVE_SIZE:
 		sel->r.top = 0;
 		sel->r.left = 0;
 		sel->r.width = IMX662_NATIVE_WIDTH;
 		sel->r.height = IMX662_NATIVE_HEIGHT;
-
-		return 0;
+		break;
+	default:
+		return -EINVAL;
 	}
 
-	return -EINVAL;
+	return 0;
 }
 
 static int imx662_set_selection(struct v4l2_subdev *sd,
-				struct v4l2_subdev_state *sd_state,
+				struct v4l2_subdev_state *state,
 				struct v4l2_subdev_selection *sel)
 {
 	struct imx662 *imx662 = to_imx662(sd);
-	struct v4l2_mbus_framefmt *fmt;
-	struct v4l2_rect rect = sel->r;
 	struct v4l2_rect *crop;
-	u32 max_left, max_top;
+	struct v4l2_rect rect;
+
+	if (sel->which == V4L2_SUBDEV_FORMAT_ACTIVE &&
+	    v4l2_subdev_is_streaming(sd))
+		return -EBUSY;
 
 	if (sel->target != V4L2_SEL_TGT_CROP)
 		return -EINVAL;
 
-	max_left = IMX662_PIXEL_ARRAY_LEFT + IMX662_PIXEL_ARRAY_WIDTH -
-		   IMX662_MIN_CROP_WIDTH;
-	max_top = IMX662_PIXEL_ARRAY_TOP + IMX662_PIXEL_ARRAY_HEIGHT -
-		  IMX662_MIN_CROP_HEIGHT;
+	/* Align the requested rectangle to the sensor's cropping granularity */
+	rect.left = round_up(sel->r.left, IMX662_CROP_WIDTH_STEP);
+	rect.top = round_up(sel->r.top, IMX662_CROP_HEIGHT_STEP);
+	rect.width = round_down(sel->r.width, IMX662_CROP_WIDTH_STEP);
+	rect.height = round_down(sel->r.height, IMX662_CROP_HEIGHT_STEP);
 
-	rect.left = clamp_t(u32, rect.left, IMX662_PIXEL_ARRAY_LEFT, max_left);
-	rect.top = clamp_t(u32, rect.top, IMX662_PIXEL_ARRAY_TOP, max_top);
-
-	rect.width =
-		clamp_t(u32,
-			round_down(rect.width, IMX662_CROP_WIDTH_STEP),
-			IMX662_MIN_CROP_WIDTH, IMX662_PIXEL_ARRAY_WIDTH);
-	rect.height =
-		clamp_t(u32,
-			round_down(rect.height, IMX662_CROP_HEIGHT_STEP),
-			IMX662_MIN_CROP_HEIGHT, IMX662_PIXEL_ARRAY_HEIGHT);
-
-	if (rect.left + rect.width - 1 >
-	    IMX662_PIXEL_ARRAY_LEFT + IMX662_PIXEL_ARRAY_WIDTH - 1)
-		rect.left =
+	/* Clamp the top-left corner so that the whole rectangle stays */
+	/* inside the active pixel array */
+	rect.left =
+		clamp_t(u32, rect.left, IMX662_PIXEL_ARRAY_LEFT,
 			IMX662_PIXEL_ARRAY_LEFT + IMX662_PIXEL_ARRAY_WIDTH -
-			rect.width;
-	if (rect.top + rect.height - 1 >
-	    IMX662_PIXEL_ARRAY_TOP + IMX662_PIXEL_ARRAY_HEIGHT - 1)
-		rect.top =
+			rect.width);
+	rect.top =
+		clamp_t(u32, rect.top, IMX662_PIXEL_ARRAY_TOP,
 			IMX662_PIXEL_ARRAY_TOP + IMX662_PIXEL_ARRAY_HEIGHT -
-			rect.height;
+			rect.height);
 
-	if (sel->flags & V4L2_SEL_FLAG_GE) {
-		if (rect.width < sel->r.width) {
-			u32 new_width = rect.width + IMX662_CROP_WIDTH_STEP;
+	/* Clamp width and height to the allowed minima and to the */
+	/* remaining space after fixing the top-left corner */
+	rect.width =
+		clamp_t(u32, rect.width, IMX662_MIN_CROP_WIDTH,
+			IMX662_PIXEL_ARRAY_LEFT + IMX662_PIXEL_ARRAY_WIDTH -
+			rect.left);
+	rect.height =
+		clamp_t(u32, rect.height, IMX662_MIN_CROP_HEIGHT,
+			IMX662_PIXEL_ARRAY_TOP + IMX662_PIXEL_ARRAY_HEIGHT -
+			rect.top);
 
-			if (new_width <= IMX662_PIXEL_ARRAY_WIDTH)
-				rect.width = new_width;
-		}
-		if (rect.height < sel->r.height) {
-			u32 new_height = rect.height + IMX662_CROP_HEIGHT_STEP;
+	crop = v4l2_subdev_state_get_crop(state, sel->pad);
 
-			if (new_height <= IMX662_PIXEL_ARRAY_HEIGHT)
-				rect.height = new_height;
-		}
+	if (rect.width != crop->width || rect.height != crop->height) {
+		struct v4l2_mbus_framefmt *format;
+
+		format = v4l2_subdev_state_get_format(state, sel->pad);
+		format->width = rect.width;
+		format->height = rect.height;
 	}
-
-	if (sel->flags & V4L2_SEL_FLAG_LE) {
-		if (rect.width > sel->r.width &&
-		    rect.width >= IMX662_MIN_CROP_WIDTH +
-				  IMX662_CROP_WIDTH_STEP)
-			rect.width -= IMX662_CROP_WIDTH_STEP;
-		if (rect.height > sel->r.height &&
-		    rect.height >= IMX662_MIN_CROP_HEIGHT +
-				   IMX662_CROP_HEIGHT_STEP)
-			rect.height -= IMX662_CROP_HEIGHT_STEP;
-	}
-
-	if (rect.width < IMX662_MIN_CROP_WIDTH ||
-	    rect.height < IMX662_MIN_CROP_HEIGHT)
-		return -EINVAL;
-
-	crop = v4l2_subdev_state_get_crop(sd_state, sel->pad);
-	fmt = v4l2_subdev_state_get_format(sd_state, sel->pad);
 
 	*crop = rect;
-
-	fmt->width = rect.width;
-	fmt->height = rect.height;
-
-	if (sel->which == V4L2_SUBDEV_FORMAT_TRY)
-		return 0;
-
-	if (v4l2_subdev_is_streaming(sd))
-		return -EBUSY;
-
-	imx662_blank_update(imx662, crop->width, crop->height);
-	imx662_exposure_update(imx662, crop->height);
-
 	sel->r = rect;
+
+	if (sel->which == V4L2_SUBDEV_FORMAT_ACTIVE) {
+		imx662_blank_update(imx662, crop->width, crop->height);
+		imx662_exposure_update(imx662, crop->height);
+	}
 
 	return 0;
 }
@@ -689,24 +637,24 @@ static int imx662_set_selection(struct v4l2_subdev *sd,
 static int imx662_init_state(struct v4l2_subdev *sd,
 			     struct v4l2_subdev_state *state)
 {
-	struct imx662 *imx662 = to_imx662(sd);
-	struct v4l2_subdev_format fmt = {
-		.pad = 0,
-		.which = V4L2_SUBDEV_FORMAT_TRY,
+	struct v4l2_subdev_selection sel = {
+		.target = V4L2_SEL_TGT_CROP,
+		.r.left = IMX662_PIXEL_ARRAY_LEFT,
+		.r.top = IMX662_PIXEL_ARRAY_TOP,
+		.r.width = IMX662_PIXEL_ARRAY_WIDTH,
+		.r.height = IMX662_PIXEL_ARRAY_HEIGHT,
+	};
+	struct v4l2_subdev_format format = {
 		.format = {
 			.width = IMX662_PIXEL_ARRAY_WIDTH,
 			.height = IMX662_PIXEL_ARRAY_HEIGHT,
-			.code = imx662->format->code[imx662->variant],
 		},
 	};
-	struct v4l2_rect *crop = v4l2_subdev_state_get_crop(state, fmt.pad);
 
-	crop->left = IMX662_PIXEL_ARRAY_LEFT;
-	crop->top = IMX662_PIXEL_ARRAY_TOP;
-	crop->width = IMX662_PIXEL_ARRAY_WIDTH;
-	crop->height = IMX662_PIXEL_ARRAY_HEIGHT;
+	imx662_set_selection(sd, state, &sel);
+	imx662_set_pad_format(sd, state, &format);
 
-	return imx662_set_pad_format(sd, state, &fmt);
+	return 0;
 }
 
 static int imx662_enable_streams(struct v4l2_subdev *sd,
@@ -720,7 +668,7 @@ static int imx662_enable_streams(struct v4l2_subdev *sd,
 	if (streams_mask != 1)
 		return -EINVAL;
 
-	ret = pm_runtime_resume_and_get(imx662->dev);
+	ret = pm_runtime_resume_and_get(sd->dev);
 	if (ret)
 		return ret;
 
@@ -745,6 +693,8 @@ static int imx662_enable_streams(struct v4l2_subdev *sd,
 	cci_write(imx662->regmap, IMX662_MDBIT, imx662->format->ad_md_bit,
 		  &ret);
 
+	cci_write(imx662->regmap, IMX662_CFMODE, imx662->variant, &ret);
+
 	switch (imx662->hdr) {
 	case IMX662_HDR_OFF:
 		cci_multi_reg_write(imx662->regmap, imx662_regs_hdr_off,
@@ -767,7 +717,7 @@ static int imx662_enable_streams(struct v4l2_subdev *sd,
 
 	ret = __v4l2_ctrl_handler_setup(imx662->sd.ctrl_handler);
 	if (ret) {
-		dev_err(imx662->dev, "Could not sync v4l2 controls\n");
+		dev_err(sd->dev, "Could not sync v4l2 controls\n");
 		return ret;
 	}
 
@@ -780,9 +730,9 @@ static int imx662_enable_streams(struct v4l2_subdev *sd,
 		return 0;
 
 start_err:
-	pm_runtime_put_autosuspend(imx662->dev);
+	pm_runtime_put_autosuspend(sd->dev);
 
-	dev_err(imx662->dev, "Failed to setup sensor\n");
+	dev_err(sd->dev, "Failed to setup sensor\n");
 
 	return ret;
 }
@@ -801,7 +751,7 @@ static int imx662_disable_streams(struct v4l2_subdev *sd,
 
 	cci_write(imx662->regmap, IMX662_XMSTA, 0x01, &ret);
 
-	pm_runtime_put_autosuspend(imx662->dev);
+	pm_runtime_put_autosuspend(sd->dev);
 
 	return ret;
 }
@@ -872,6 +822,10 @@ static int imx662_ctrls_init(struct imx662 *imx662)
 	imx662->hcg = v4l2_ctrl_new_custom(&imx662->ctrls,
 					   &imx662_hcg_ctrl, NULL);
 
+	imx662->gain = v4l2_ctrl_new_std(&imx662->ctrls, &imx662_ctrl_ops,
+					 V4L2_CID_ANALOGUE_GAIN, 0, 1, 1, 0);
+	v4l2_ctrl_cluster(2, &imx662->hcg);
+
 	/* The exact value of pixel_rate is not described in the datasheet. */
 	/* The multiplier 3 was chosen experimentally. */
 	pixel_rate = IMX662_PIXEL_RATE * 3;
@@ -896,9 +850,6 @@ static int imx662_ctrls_init(struct imx662 *imx662)
 					     V4L2_CID_EXPOSURE, 0, 0xffff,
 					     1, 0xffff);
 
-	imx662->gain = v4l2_ctrl_new_std(&imx662->ctrls, &imx662_ctrl_ops,
-					 V4L2_CID_ANALOGUE_GAIN, 0, 1, 1, 0);
-
 	v4l2_ctrl_new_std(&imx662->ctrls, &imx662_ctrl_ops, V4L2_CID_HFLIP, 0,
 			  1, 1, 0);
 
@@ -913,7 +864,7 @@ static int imx662_ctrls_init(struct imx662 *imx662)
 				     ARRAY_SIZE(imx662_hdr_menu) - 1, 0,
 				     IMX662_HDR_OFF, imx662_hdr_menu);
 
-	ret = v4l2_fwnode_device_parse(imx662->dev, &props);
+	ret = v4l2_fwnode_device_parse(imx662->sd.dev, &props);
 	if (ret)
 		return ret;
 
@@ -936,9 +887,9 @@ static int imx662_init_clk(struct imx662 *imx662)
 {
 	u32 xclk_freq;
 
-	imx662->clk = devm_v4l2_sensor_clk_get(imx662->dev, NULL);
+	imx662->clk = devm_v4l2_sensor_clk_get(imx662->sd.dev, NULL);
 	if (IS_ERR(imx662->clk))
-		return dev_err_probe(imx662->dev, PTR_ERR(imx662->clk),
+		return dev_err_probe(imx662->sd.dev, PTR_ERR(imx662->clk),
 				     "Failed to get clock\n");
 
 	xclk_freq = clk_get_rate(imx662->clk);
@@ -960,7 +911,7 @@ static int imx662_init_clk(struct imx662 *imx662)
 		imx662->inck = IMX662_INCK_SEL_74_25;
 		break;
 	default:
-		return dev_err_probe(imx662->dev, -EINVAL,
+		return dev_err_probe(imx662->sd.dev, -EINVAL,
 				     "EXT_CLK frequency %u is not supported\n",
 				     xclk_freq);
 		return -EINVAL;
@@ -982,26 +933,26 @@ static int imx662_parse_hw_config(struct imx662 *imx662)
 	for (i = 0; i < ARRAY_SIZE(imx662->supplies); i++)
 		imx662->supplies[i].supply = imx662_supply_names[i];
 
-	ret = devm_regulator_bulk_get(imx662->dev,
+	ret = devm_regulator_bulk_get(imx662->sd.dev,
 				      ARRAY_SIZE(imx662->supplies),
 				      imx662->supplies);
 	if (ret)
-		return dev_err_probe(imx662->dev, ret,
+		return dev_err_probe(imx662->sd.dev, ret,
 				     "Failed to get supplies\n");
 
-	imx662->reset = devm_gpiod_get_optional(imx662->dev, "reset",
+	imx662->reset = devm_gpiod_get_optional(imx662->sd.dev, "reset",
 						GPIOD_OUT_HIGH);
 	if (IS_ERR(imx662->reset))
-		return dev_err_probe(imx662->dev, PTR_ERR(imx662->reset),
+		return dev_err_probe(imx662->sd.dev, PTR_ERR(imx662->reset),
 				     "Failed to get reset GPIO\n");
 
 	ret = imx662_init_clk(imx662);
 	if (ret)
 		return ret;
 
-	imx662->variant = (uintptr_t)of_device_get_match_data(imx662->dev);
+	imx662->variant = (uintptr_t)of_device_get_match_data(imx662->sd.dev);
 
-	ep = fwnode_graph_get_next_endpoint(dev_fwnode(imx662->dev), NULL);
+	ep = fwnode_graph_get_next_endpoint(dev_fwnode(imx662->sd.dev), NULL);
 	if (!ep)
 		return -ENXIO;
 
@@ -1016,13 +967,13 @@ static int imx662_parse_hw_config(struct imx662 *imx662)
 		imx662->num_data_lanes = bus_cfg.bus.mipi_csi2.num_data_lanes;
 		break;
 	default:
-		ret = dev_err_probe(imx662->dev, -EINVAL,
+		ret = dev_err_probe(imx662->sd.dev, -EINVAL,
 				    "Invalid number of CSI2 data lanes %d\n",
 				    bus_cfg.bus.mipi_csi2.num_data_lanes);
 		goto done_endpoint_free;
 	}
 
-	ret = v4l2_link_freq_to_bitmap(imx662->dev, bus_cfg.link_frequencies,
+	ret = v4l2_link_freq_to_bitmap(imx662->sd.dev, bus_cfg.link_frequencies,
 				       bus_cfg.nr_of_link_frequencies,
 				       imx662_link_freqs,
 				       ARRAY_SIZE(imx662_link_freqs),
@@ -1098,17 +1049,15 @@ static int imx662_probe(struct i2c_client *client)
 	if (!imx662)
 		return -ENOMEM;
 
-	imx662->dev = dev;
-
 	imx662->regmap = devm_cci_regmap_init_i2c(client, 16);
 	if (IS_ERR(imx662->regmap))
 		return PTR_ERR(imx662->regmap);
 
+	v4l2_i2c_subdev_init(&imx662->sd, client, &imx662_subdev_ops);
+
 	ret = imx662_parse_hw_config(imx662);
 	if (ret)
-		return ret;
-
-	v4l2_i2c_subdev_init(&imx662->sd, client, &imx662_subdev_ops);
+		goto error_subdev;
 
 	ret = imx662_power_on(dev);
 	if (ret)
@@ -1139,8 +1088,6 @@ static int imx662_probe(struct i2c_client *client)
 		goto error_pm;
 	}
 
-	imx662->sd.state_lock = imx662->ctrls.lock;
-
 	ret = v4l2_subdev_init_finalize(&imx662->sd);
 	if (ret) {
 		dev_err_probe(dev, ret, "Subdev init error\n");
@@ -1150,6 +1097,8 @@ static int imx662_probe(struct i2c_client *client)
 	ret = imx662_ctrls_init(imx662);
 	if (ret)
 		goto error_media;
+
+	imx662->sd.state_lock = imx662->ctrls.lock;
 
 	ret = v4l2_async_register_subdev_sensor(&imx662->sd);
 	if (ret) {
