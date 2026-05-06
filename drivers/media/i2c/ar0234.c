@@ -18,9 +18,9 @@
 
 #include <linux/clk.h>
 #include <linux/delay.h>
+#include <linux/gpio/consumer.h>
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
-#include <linux/gpio/consumer.h>
 #include <linux/regulator/consumer.h>
 #include <media/mipi-csi2.h>
 #include <media/v4l2-cci.h>
@@ -31,44 +31,44 @@
 
 #include "ccs-pll.h"
 
-#define AR0234_NATIVE_WIDTH				(1940U)
-#define AR0234_NATIVE_HEIGHT				(1220U)
-#define AR0234_PIXEL_ARRAY_LEFT				(8U)
-#define AR0234_PIXEL_ARRAY_TOP				(8U)
-#define AR0234_PIXEL_ARRAY_WIDTH			(1920U)
-#define AR0234_PIXEL_ARRAY_HEIGHT			(1200U)
-#define AR0234_MIN_CROP_WIDTH				(4U)
-#define AR0234_MIN_CROP_HEIGHT				(2U)
-#define AR0234_CROP_WIDTH_STEP				(4U)
-#define AR0234_CROP_HEIGHT_STEP				(2U)
+#define AR0234_NATIVE_WIDTH				1940U
+#define AR0234_NATIVE_HEIGHT				1220U
+#define AR0234_PIXEL_ARRAY_LEFT				8U
+#define AR0234_PIXEL_ARRAY_TOP				8U
+#define AR0234_PIXEL_ARRAY_WIDTH			1920U
+#define AR0234_PIXEL_ARRAY_HEIGHT			1200U
+#define AR0234_MIN_CROP_WIDTH				4U
+#define AR0234_MIN_CROP_HEIGHT				2U
+#define AR0234_CROP_WIDTH_STEP				4U
+#define AR0234_CROP_HEIGHT_STEP				2U
 
 #define AR0234_REG_CHIP_VERSION				CCI_REG16(0x3000)
-#	define AR0234_CHIP_ID				(0x0a56)
-#	define AR0234_CHIP_ID_MONO			(0x1a56)
+#	define AR0234_CHIP_ID				0x0a56
+#	define AR0234_CHIP_ID_MONO			0x1a56
 #define AR0234_REG_Y_ADDR_START				CCI_REG16(0x3002)
 #define AR0234_REG_X_ADDR_START				CCI_REG16(0x3004)
 #define AR0234_REG_Y_ADDR_END				CCI_REG16(0x3006)
 #define AR0234_REG_X_ADDR_END				CCI_REG16(0x3008)
 #define AR0234_REG_FRAME_LENGTH_LINES			CCI_REG16(0x300a)
-#	define AR0234_FRAME_LENGTH_LINES_MIN		(16)
-#	define AR0234_VBLANK_MAX			(0xf000)
+#	define AR0234_FRAME_LENGTH_LINES_MIN		16
+#	define AR0234_VBLANK_MAX			0xf000
 #define AR0234_REG_LINE_LENGTH_PCK			CCI_REG16(0x300c)
-#	define AR0234_LINE_LENGTH_PCK_MIN		(612)
+#	define AR0234_LINE_LENGTH_PCK_MIN		612
 #	define AR0234_HBLANK_MIN			\
 		(AR0234_LINE_LENGTH_PCK_MIN - AR0234_PIXEL_ARRAY_WIDTH / 4)
-#	define AR0234_HBLANK_MAX			(0xf000)
+#	define AR0234_HBLANK_MAX			0xf000
 #define AR0234_REG_REVISION_NUMBER			CCI_REG16(0x300e)
 #define AR0234_REG_COARSE_INTEGRATION_TIME		CCI_REG16(0x3012)
-#	define AR0234_EXPOSURE_MIN			(2)
-#	define AR0234_EXPOSURE_STEP			(1)
+#	define AR0234_EXPOSURE_MIN			2
+#	define AR0234_EXPOSURE_STEP			1
 #define AR0234_REG_FINE_INTEGRATION_TIME		CCI_REG16(0x3014)
 #define AR0234_REG_RESET				CCI_REG16(0x301a)
 #define AR0234_REG_MODE_SELECT				CCI_REG8(0x301c)
 #define AR0234_REG_IMAGE_ORIENTATION			CCI_REG8(0x301d)
 #define AR0234_REG_DATA_PEDESTAL			CCI_REG16(0x301e)
-#	define AR0234_DATA_PEDESTAL_MIN			(0x0000)
-#	define AR0234_DATA_PEDESTAL_MAX			(0x03ff)
-#	define AR0234_DATA_PEDESTAL_DEFAULT		(0x002a)
+#	define AR0234_DATA_PEDESTAL_MIN			0x0000
+#	define AR0234_DATA_PEDESTAL_MAX			0x03ff
+#	define AR0234_DATA_PEDESTAL_DEFAULT		0x002a
 #define AR0234_REG_GROUPED_PARAMETER_HOLD		CCI_REG8(0x3022)
 #define AR0234_REG_VT_PIX_CLK_DIV			CCI_REG16(0x302a)
 #define AR0234_REG_VT_SYS_CLK_DIV			CCI_REG16(0x302c)
@@ -79,27 +79,26 @@
 #define AR0234_REG_BLUE_GAIN				CCI_REG16(0x3058)
 #define AR0234_REG_RED_GAIN				CCI_REG16(0x305a)
 #define AR0234_REG_GLOBAL_GAIN				CCI_REG16(0x305e)
-#	define AR0234_GAIN_MIN				(0x0080)
-#	define AR0234_GAIN_MAX				(0x07ff)
-#	define AR0234_GAIN_DEFAULT			(0x0080)
+#	define AR0234_GAIN_MIN				0x0080
+#	define AR0234_GAIN_MAX				0x07ff
+#	define AR0234_GAIN_DEFAULT			0x0080
 #define AR0234_REG_ANALOG_GAIN				CCI_REG16(0x3060)
-#	define AR0234_ANA_GAIN_BASE			(64)
-#	define AR0234_ANA_GAIN_MIN			(AR0234_ANA_GAIN_BASE)
-#	define AR0234_ANA_GAIN_MAX			(16 * AR0234_ANA_GAIN_BASE)
-#	define AR0234_ANA_GAIN_DEFAULT			(AR0234_ANA_GAIN_BASE)
+#	define AR0234_ANA_GAIN_MIN			0
+#	define AR0234_ANA_GAIN_MAX			0x4f
+#	define AR0234_ANA_GAIN_DEFAULT			0x0e
 #define AR0234_REG_TEST_PATTERN_MODE			CCI_REG16(0x3070)
-#	define AR0234_TEST_PATTERN_DISABLED		(0)
-#	define AR0234_TEST_PATTERN_SOLID_COLOR		(1)
-#	define AR0234_TEST_PATTERN_VERTICAL_COLOR_BARS	(2)
-#	define AR0234_TEST_PATTERN_FADE_TO_GREY		(3)
-#	define AR0234_TEST_PATTERN_WALKING_1S		(256)
+#	define AR0234_TEST_PATTERN_DISABLED		0
+#	define AR0234_TEST_PATTERN_SOLID_COLOR		1
+#	define AR0234_TEST_PATTERN_VERTICAL_COLOR_BARS	2
+#	define AR0234_TEST_PATTERN_FADE_TO_GREY		3
+#	define AR0234_TEST_PATTERN_WALKING_1S		256
 #define AR0234_REG_TEST_DATA_RED			CCI_REG16(0x3072)
 #define AR0234_REG_TEST_DATA_GREENR			CCI_REG16(0x3074)
 #define AR0234_REG_TEST_DATA_BLUE			CCI_REG16(0x3076)
 #define AR0234_REG_TEST_DATA_GREENB			CCI_REG16(0x3078)
-#	define AR0234_TESTP_COLOUR_MIN			(0)
-#	define AR0234_TESTP_COLOUR_MAX			(0x3ff)
-#	define AR0234_TESTP_COLOUR_STEP			(1)
+#	define AR0234_TESTP_COLOUR_MIN			0
+#	define AR0234_TESTP_COLOUR_MAX			0x3ff
+#	define AR0234_TESTP_COLOUR_STEP			1
 #define AR0234_REG_MFR_30BA				CCI_REG16(0x30ba)
 #	define AR0234_MFR_30BA_GAIN_BITS(x)		(0x7620 | (x))
 #define AR0234_REG_DATA_FORMAT_BITS			CCI_REG16(0x31ac)
@@ -296,82 +295,56 @@ static int ar0234_calculate_pll(struct ar0234 *ar0234,
 	return ret;
 }
 
-static u32 ar0234_calc_analog_gain(u32 req_gain_q6)
+static u8 ar0234_mfr_30ba_bits(u32 pixel_rate, u8 val)
 {
-	u32 s, t, best = 0, min_diff = U32_MAX;
-	u32 coarse_mult, fine_gain_q6, total_gain_q6, diff;
+	u32 coarse = (val >> 4) & 0x7;
 
-	for (s = 0; s <= 4; s++) {
-		coarse_mult = (1 << s) * AR0234_ANA_GAIN_BASE;
+	if (pixel_rate <= 22500000)
+		return 6;
 
-		for (t = 0; t <= 15; t++) {
-			if (s == 0 || s == 2) {
-				fine_gain_q6 =
-					(AR0234_ANA_GAIN_BASE * 32) / (32 - t);
-			} else if (s == 1 || s == 3) {
-				fine_gain_q6 = (AR0234_ANA_GAIN_BASE * 16) /
-					       (16 - (t / 2));
-			} else {
-				fine_gain_q6 = (AR0234_ANA_GAIN_BASE * 8) /
-					       (8 - (t / 4));
-			}
+	if (pixel_rate <= 45000000) {
+		u32 fine = val & 0xf;
 
-			total_gain_q6 = (coarse_mult * fine_gain_q6) /
-					AR0234_ANA_GAIN_BASE;
+		if (coarse <= 1)
+			return 6;
 
-			if (req_gain_q6 > total_gain_q6)
-				diff = req_gain_q6 - total_gain_q6;
-			else
-				diff = total_gain_q6 - req_gain_q6;
+		if (coarse == 2) {
+			if (fine <= 0x2f)
+				return 1;
+		} else if (coarse == 3) {
+			if (fine <= 0x2f)
+				return 1;
 
-			if (diff < min_diff) {
-				min_diff = diff;
-				best = (s << 4) | t;
-			}
+			if (fine >= 0x30 && fine <= 0x3b)
+				return 1;
 		}
+
+		return 0;
 	}
 
-	return best;
+	return (coarse == 0) ? 2 : (coarse == 1) ? 1 : 0;
 }
 
-static int ar0234_set_mfr_30ba(struct ar0234 *ar0234, u32 analog_reg_val)
+static int ar0234_set_mfr_30ba(struct ar0234 *ar0234, u32 val)
 {
-	u16 mfr_30ba_val;
-	u32 coarse_idx = (analog_reg_val >> 4) & 0x7;
+	u8 bits = ar0234_mfr_30ba_bits(ar0234->pll.pixel_rate_pixel_array, val);
+	u16 mfr_30ba = AR0234_MFR_30BA_GAIN_BITS(bits);
 
-	if (ar0234->pll.pixel_rate_pixel_array <= 45000000) {
-		if (coarse_idx < 3)
-			mfr_30ba_val = AR0234_MFR_30BA_GAIN_BITS(6);
-		else
-			mfr_30ba_val = AR0234_MFR_30BA_GAIN_BITS(0);
-	} else {
-		if (coarse_idx == 0)
-			mfr_30ba_val = AR0234_MFR_30BA_GAIN_BITS(2);
-		else if (coarse_idx == 1)
-			mfr_30ba_val = AR0234_MFR_30BA_GAIN_BITS(1);
-		else
-			mfr_30ba_val = AR0234_MFR_30BA_GAIN_BITS(0);
-	}
-
-	return cci_write(ar0234->regmap, AR0234_REG_MFR_30BA,
-			 mfr_30ba_val, NULL);
+	return cci_write(ar0234->regmap, AR0234_REG_MFR_30BA, mfr_30ba, NULL);
 }
 
 static int ar0234_set_analog_gain(struct ar0234 *ar0234, u32 val)
 {
-	u32 reg_val;
 	int ret;
-
-	reg_val = ar0234_calc_analog_gain(val);
 
 	ret = cci_write(ar0234->regmap, AR0234_REG_GROUPED_PARAMETER_HOLD,
 			1, NULL);
 	if (ret)
 		return ret;
 
-	ret = ar0234_set_mfr_30ba(ar0234, reg_val);
+	ret = ar0234_set_mfr_30ba(ar0234, val);
 
-	cci_write(ar0234->regmap, AR0234_REG_ANALOG_GAIN, reg_val, &ret);
+	cci_write(ar0234->regmap, AR0234_REG_ANALOG_GAIN, val, &ret);
 
 	cci_write(ar0234->regmap, AR0234_REG_GROUPED_PARAMETER_HOLD, 0, NULL);
 
@@ -407,7 +380,7 @@ static int ar0234_set_ctrl(struct v4l2_ctrl *ctrl)
 			return ret;
 	}
 
-	if (!pm_runtime_get_if_in_use(sd->dev))
+	if (!pm_runtime_get_if_active(sd->dev))
 		return 0;
 
 	switch (ctrl->id) {
@@ -431,6 +404,10 @@ static int ar0234_set_ctrl(struct v4l2_ctrl *ctrl)
 		break;
 	case V4L2_CID_HFLIP:
 	case V4L2_CID_VFLIP:
+		if (v4l2_subdev_is_streaming(sd)) {
+			ret = -EBUSY;
+			break;
+		}
 		cci_write(ar0234->regmap, AR0234_REG_IMAGE_ORIENTATION,
 			  (ar0234->vflip->val << 1) | ar0234->hflip->val, &ret);
 		break;
@@ -506,7 +483,16 @@ static int ar0234_enum_frame_size(struct v4l2_subdev *sd,
 				  struct v4l2_subdev_state *state,
 				  struct v4l2_subdev_frame_size_enum *fse)
 {
+	struct ar0234 *ar0234 = to_ar0234(sd);
+	int i;
+
 	if (fse->index)
+		return -EINVAL;
+
+	for (i = 0; i < ARRAY_SIZE(ar0234_modes); i++)
+		if (ar0234_modes[i].code[ar0234->variant] == fse->code)
+			break;
+	if (i == ARRAY_SIZE(ar0234_modes))
 		return -EINVAL;
 
 	fse->min_width = AR0234_PIXEL_ARRAY_WIDTH;
@@ -693,8 +679,10 @@ static int ar0234_init_state(struct v4l2_subdev *sd,
 		.r.width = AR0234_PIXEL_ARRAY_WIDTH,
 		.r.height = AR0234_PIXEL_ARRAY_HEIGHT,
 	};
+	struct ar0234 *ar0234 = to_ar0234(sd);
 	struct v4l2_subdev_format format = {
 		.format = {
+			.code = ar0234_modes[0].code[ar0234->variant],
 			.width = AR0234_PIXEL_ARRAY_WIDTH,
 			.height = AR0234_PIXEL_ARRAY_HEIGHT,
 		},
@@ -794,7 +782,7 @@ static int ar0234_disable_streams(struct v4l2_subdev *sd,
 	return ret;
 }
 
-static int ar0234_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
+static int ar0234_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad,
 				struct v4l2_mbus_config *config)
 {
 	struct ar0234 *ar0234 = to_ar0234(sd);
@@ -802,6 +790,22 @@ static int ar0234_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
 	config->type = V4L2_MBUS_CSI2_DPHY;
 	config->bus.mipi_csi2.flags = 0;
 	config->bus.mipi_csi2.num_data_lanes = ar0234->num_data_lanes;
+
+	return 0;
+}
+
+static int ar0234_get_frame_desc(struct v4l2_subdev *sd, unsigned int pad,
+				 struct v4l2_mbus_frame_desc *fd)
+{
+	struct ar0234 *ar0234 = to_ar0234(sd);
+
+	fd->type = V4L2_MBUS_FRAME_DESC_TYPE_CSI2;
+	fd->num_entries = 1;
+
+	memset(fd->entry, 0, sizeof(fd->entry));
+
+	fd->entry[0].pixelcode = ar0234->mode->code[ar0234->variant];
+	fd->entry[0].bus.csi2.dt = ar0234->mode->mipi_dt;
 
 	return 0;
 }
@@ -820,6 +824,7 @@ static const struct v4l2_subdev_pad_ops ar0234_pad_ops = {
 	.enable_streams = ar0234_enable_streams,
 	.disable_streams = ar0234_disable_streams,
 	.get_mbus_config = ar0234_g_mbus_config,
+	.get_frame_desc = ar0234_get_frame_desc,
 };
 
 static const struct v4l2_subdev_ops ar0234_subdev_ops = {
@@ -838,7 +843,8 @@ static const struct media_entity_operations ar0234_subdev_entity_ops = {
 static int ar0234_ctrls_init(struct ar0234 *ar0234)
 {
 	struct v4l2_fwnode_device_properties props;
-	int i, ret;
+	unsigned int i;
+	int ret;
 
 	ret = v4l2_ctrl_handler_init(&ar0234->ctrls, 17 + 2);
 	if (ret)
@@ -1204,14 +1210,16 @@ static void ar0234_remove(struct i2c_client *client)
 	pm_runtime_set_suspended(&client->dev);
 }
 
-static const struct acpi_device_id ar0234_acpi_ids[] __maybe_unused = {
+static const struct acpi_device_id ar0234_acpi_ids[] = {
 	{ "INTC10C0" },
 	{ }
 };
 MODULE_DEVICE_TABLE(acpi, ar0234_acpi_ids);
 
-static const struct of_device_id ar0234_dt_ids[] __maybe_unused = {
+static const struct of_device_id ar0234_dt_ids[] = {
 	{ .compatible = "onnn,ar0234cs" },
+	{ .compatible = "onnn,ar0234cssc" },
+	{ .compatible = "onnn,ar0234cssm" },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, ar0234_dt_ids);
