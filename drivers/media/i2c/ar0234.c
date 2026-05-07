@@ -214,8 +214,6 @@ struct ar0234 {
 
 	struct ccs_pll pll;
 
-	struct ar0234_mode const *mode;
-
 	struct v4l2_ctrl_handler ctrls;
 
 	struct v4l2_ctrl *pixel_rate;
@@ -354,6 +352,22 @@ static int ar0234_set_analog_gain(struct ar0234 *ar0234, u32 val)
 	cci_write(ar0234->regmap, AR0234_REG_GROUPED_PARAMETER_HOLD, 0, NULL);
 
 	return ret;
+}
+
+static const struct ar0234_mode *ar0234_mode_from_code(struct ar0234 *ar0234,
+						       u32 code, bool notempty)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(ar0234_modes); i++) {
+		if (!ar0234_modes[i].code[ar0234->model])
+			continue;
+
+		if (ar0234_modes[i].code[ar0234->model] == code)
+			return &ar0234_modes[i];
+	}
+
+	return notempty ? &ar0234_modes[0] : NULL;
 }
 
 static int ar0234_set_ctrl(struct v4l2_ctrl *ctrl)
@@ -495,15 +509,11 @@ static int ar0234_enum_frame_size(struct v4l2_subdev *sd,
 				  struct v4l2_subdev_frame_size_enum *fse)
 {
 	struct ar0234 *ar0234 = to_ar0234(sd);
-	int i;
 
 	if (fse->index)
 		return -EINVAL;
 
-	for (i = 0; i < ARRAY_SIZE(ar0234_modes); i++)
-		if (ar0234_modes[i].code[ar0234->model] == fse->code)
-			break;
-	if (i == ARRAY_SIZE(ar0234_modes))
+	if (!ar0234_mode_from_code(ar0234, fse->code, false))
 		return -EINVAL;
 
 	fse->min_width = AR0234_PIXEL_ARRAY_WIDTH;
@@ -514,16 +524,17 @@ static int ar0234_enum_frame_size(struct v4l2_subdev *sd,
 	return 0;
 }
 
-static void ar0234_set_link_limits(struct ar0234 *ar0234)
+static void ar0234_set_link_limits(struct ar0234 *ar0234,
+				   const struct ar0234_mode *mode)
 {
-	u64 pixel_rate = ar0234->link_freqs[ar0234->mode->link_freq_index] * 2;
+	u64 pixel_rate = ar0234->link_freqs[mode->link_freq_index] * 2;
 
 	pixel_rate *= ar0234->ep_cfg.bus.mipi_csi2.num_data_lanes;
-	do_div(pixel_rate, ar0234->mode->bpp_out);
+	do_div(pixel_rate, mode->bpp_out);
 
 	__v4l2_ctrl_s_ctrl_int64(ar0234->pixel_rate, pixel_rate);
 
-	__v4l2_ctrl_s_ctrl(ar0234->link_freq, ar0234->mode->link_freq_index);
+	__v4l2_ctrl_s_ctrl(ar0234->link_freq, mode->link_freq_index);
 }
 
 static void ar0234_set_framing_limits(struct ar0234 *ar0234, u32 width)
@@ -542,23 +553,15 @@ static int ar0234_set_pad_format(struct v4l2_subdev *sd,
 				 struct v4l2_subdev_state *state,
 				 struct v4l2_subdev_format *fmt)
 {
-	struct ar0234_mode const *mode = &ar0234_modes[0];
 	struct ar0234 *ar0234 = to_ar0234(sd);
+	struct ar0234_mode const *mode;
 	struct v4l2_rect *crop;
-	int i;
 
 	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE &&
 	    v4l2_subdev_is_streaming(sd))
 		return -EBUSY;
 
-	for (i = 0; i < ARRAY_SIZE(ar0234_modes); i++) {
-		if (!ar0234_modes[i].code[ar0234->model])
-			continue;
-		if (ar0234_modes[i].code[ar0234->model] == fmt->format.code) {
-			mode = &ar0234_modes[i];
-			break;
-		}
-	}
+	mode = ar0234_mode_from_code(ar0234, fmt->format.code, true);
 
 	crop = v4l2_subdev_state_get_crop(state, fmt->pad);
 
@@ -573,7 +576,7 @@ static int ar0234_set_pad_format(struct v4l2_subdev *sd,
 
 	*v4l2_subdev_state_get_format(state, fmt->pad) = fmt->format;
 
-	if (ar0234->mode != mode && fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE) {
+	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE) {
 		int ret = ar0234_calculate_pll(ar0234, mode);
 
 		if (ret) {
@@ -581,9 +584,7 @@ static int ar0234_set_pad_format(struct v4l2_subdev *sd,
 			return -EINVAL;
 		}
 
-		ar0234->mode = mode;
-
-		ar0234_set_link_limits(ar0234);
+		ar0234_set_link_limits(ar0234, mode);
 		ar0234_set_framing_limits(ar0234, crop->width);
 	}
 
@@ -710,8 +711,14 @@ static int ar0234_enable_streams(struct v4l2_subdev *sd,
 				 u64 streams_mask)
 {
 	struct ar0234 *ar0234 = to_ar0234(sd);
-	struct v4l2_rect *crop = v4l2_subdev_state_get_crop(state, pad);
+	const struct v4l2_mbus_framefmt *fmt;
+	const struct ar0234_mode *mode;
+	const struct v4l2_rect *crop;
 	int x_addr_start, x_addr_end, y_addr_start, y_addr_end, ret;
+
+	crop = v4l2_subdev_state_get_crop(state, pad);
+	fmt = v4l2_subdev_state_get_format(state, pad);
+	mode = ar0234_mode_from_code(ar0234, fmt->code, true);
 
 	if (streams_mask != 1)
 		return -EINVAL;
@@ -736,19 +743,16 @@ static int ar0234_enable_streams(struct v4l2_subdev *sd,
 	cci_multi_reg_write(ar0234->regmap, ar0234_common_init,
 			    ARRAY_SIZE(ar0234_common_init), &ret);
 
-	cci_write(ar0234->regmap, AR0234_REG_COMPANDING,
-		  ar0234->mode->dpcm, &ret);
+	cci_write(ar0234->regmap, AR0234_REG_COMPANDING, mode->dpcm, &ret);
 
 	cci_write(ar0234->regmap, AR0234_REG_DATA_FORMAT_BITS,
-		  DATA_FORMAT_BITS(ar0234->mode->bpp_in, ar0234->mode->bpp_out),
-		  &ret);
+		  DATA_FORMAT_BITS(mode->bpp_in, mode->bpp_out), &ret);
 
 	cci_write(ar0234->regmap, AR0234_REG_SERIAL_FORMAT,
 		  DATA_FORMAT_LANES(ar0234->ep_cfg.bus.mipi_csi2.num_data_lanes),
 		  &ret);
 
-	cci_write(ar0234->regmap, AR0234_REG_MIPI_CNTRL,
-		  ar0234->mode->mipi_dt, &ret);
+	cci_write(ar0234->regmap, AR0234_REG_MIPI_CNTRL, mode->mipi_dt, &ret);
 
 	x_addr_start = crop->left;
 	y_addr_start = crop->top;
@@ -809,14 +813,23 @@ static int ar0234_get_frame_desc(struct v4l2_subdev *sd, unsigned int pad,
 				 struct v4l2_mbus_frame_desc *fd)
 {
 	struct ar0234 *ar0234 = to_ar0234(sd);
+	const struct v4l2_mbus_framefmt *fmt;
+	struct v4l2_subdev_state *state;
+	const struct ar0234_mode *mode;
+
+	state = v4l2_subdev_lock_and_get_active_state(&ar0234->sd);
+	fmt = v4l2_subdev_state_get_format(state, pad);
+	v4l2_subdev_unlock_state(state);
+
+	mode = ar0234_mode_from_code(ar0234, fmt->code, true);
 
 	fd->type = V4L2_MBUS_FRAME_DESC_TYPE_CSI2;
 	fd->num_entries = 1;
 
 	memset(fd->entry, 0, sizeof(fd->entry));
 
-	fd->entry[0].pixelcode = ar0234->mode->code[ar0234->model];
-	fd->entry[0].bus.csi2.dt = ar0234->mode->mipi_dt;
+	fd->entry[0].pixelcode = mode->code[ar0234->model];
+	fd->entry[0].bus.csi2.dt = mode->mipi_dt;
 
 	return 0;
 }
@@ -939,7 +952,7 @@ static int ar0234_ctrls_init(struct ar0234 *ar0234)
 
 	ar0234->sd.ctrl_handler = &ar0234->ctrls;
 
-	ar0234_set_link_limits(ar0234);
+	ar0234_set_link_limits(ar0234, &ar0234_modes[0]);
 	ar0234_set_framing_limits(ar0234, AR0234_PIXEL_ARRAY_WIDTH);
 
 	return 0;
@@ -1161,9 +1174,7 @@ static int ar0234_probe(struct i2c_client *client)
 	if (ret)
 		goto error_pm;
 
-	ar0234->mode = &ar0234_modes[0];
-
-	ret = ar0234_calculate_pll(ar0234, ar0234->mode);
+	ret = ar0234_calculate_pll(ar0234, &ar0234_modes[0]);
 	if (ret) {
 		dev_err_probe(dev, ret, "PLL calculations failed\n");
 		goto error_pm;
