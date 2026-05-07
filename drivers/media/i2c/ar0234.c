@@ -51,11 +51,13 @@
 #define AR0234_REG_X_ADDR_END				CCI_REG16(0x3008)
 #define AR0234_REG_FRAME_LENGTH_LINES			CCI_REG16(0x300a)
 #	define AR0234_FRAME_LENGTH_LINES_MIN		16
+#	define AR0234_VBLANK_MIN			\
+		(AR0234_FRAME_LENGTH_LINES_MIN + 5)
 #	define AR0234_VBLANK_MAX			0xf000
 #define AR0234_REG_LINE_LENGTH_PCK			CCI_REG16(0x300c)
 #	define AR0234_LINE_LENGTH_PCK_MIN		612
 #	define AR0234_HBLANK_MIN			\
-		(AR0234_LINE_LENGTH_PCK_MIN - AR0234_PIXEL_ARRAY_WIDTH / 4)
+		((AR0234_LINE_LENGTH_PCK_MIN - AR0234_PIXEL_ARRAY_WIDTH / 4) * 4)
 #	define AR0234_HBLANK_MAX			0xf000
 #define AR0234_REG_REVISION_NUMBER			CCI_REG16(0x300e)
 #define AR0234_REG_COARSE_INTEGRATION_TIME		CCI_REG16(0x3012)
@@ -135,25 +137,21 @@ static const char *const ar0234_supply_names[] = {
 	"vddio",
 };
 
-enum ar0234_colour_variant {
-	AR0234_VARIANT_MONO,
-	AR0234_VARIANT_COLOUR,
-	AR0234_VARIANT_MAX
+enum ar0234_colour_model {
+	AR0234_MODEL_MONO,
+	AR0234_MODEL_COLOUR,
+	AR0234_MODEL_MAX
 };
 
-enum ar0234_link_freq_index {
-	AR0234_LINK_FREQ_IDX_BPP_8,
-	AR0234_LINK_FREQ_IDX_BPP_10,
-	AR0234_LINK_FREQ_IDX_MAX
-};
+static const enum ar0234_colour_model ar0234_model_mono = AR0234_MODEL_MONO;
+static const enum ar0234_colour_model ar0234_model_colour = AR0234_MODEL_COLOUR;
 
 struct ar0234_mode {
 	u8 bpp_in;
 	u8 bpp_out;
 	u8 dpcm;
 	u8 mipi_dt;
-	int link_freq_index;
-	u32 code[AR0234_VARIANT_MAX];
+	u32 code[AR0234_MODEL_MAX];
 };
 
 static const struct ar0234_mode ar0234_modes[] = {
@@ -162,10 +160,9 @@ static const struct ar0234_mode ar0234_modes[] = {
 		.bpp_out = 8,
 		.dpcm = 0,
 		.mipi_dt = MIPI_CSI2_DT_RAW8,
-		.link_freq_index = AR0234_LINK_FREQ_IDX_BPP_8,
 		.code = {
-			[AR0234_VARIANT_MONO] = MEDIA_BUS_FMT_Y8_1X8,
-			[AR0234_VARIANT_COLOUR] = MEDIA_BUS_FMT_SGRBG8_1X8,
+			[AR0234_MODEL_MONO] = MEDIA_BUS_FMT_Y8_1X8,
+			[AR0234_MODEL_COLOUR] = MEDIA_BUS_FMT_SGRBG8_1X8,
 		},
 	},
 	{
@@ -173,10 +170,9 @@ static const struct ar0234_mode ar0234_modes[] = {
 		.bpp_out = 10,
 		.dpcm = 0,
 		.mipi_dt = MIPI_CSI2_DT_RAW10,
-		.link_freq_index = AR0234_LINK_FREQ_IDX_BPP_10,
 		.code = {
-			[AR0234_VARIANT_MONO] = MEDIA_BUS_FMT_Y10_1X10,
-			[AR0234_VARIANT_COLOUR] = MEDIA_BUS_FMT_SGRBG10_1X10,
+			[AR0234_MODEL_MONO] = MEDIA_BUS_FMT_Y10_1X10,
+			[AR0234_MODEL_COLOUR] = MEDIA_BUS_FMT_SGRBG10_1X10,
 		},
 	},
 	{
@@ -184,10 +180,8 @@ static const struct ar0234_mode ar0234_modes[] = {
 		.bpp_out = 8,
 		.dpcm = COMPANDING_DPCM_EN,
 		.mipi_dt = MIPI_CSI2_DT_RAW8,
-		.link_freq_index = AR0234_LINK_FREQ_IDX_BPP_8,
 		.code = {
-			[AR0234_VARIANT_COLOUR] =
-				MEDIA_BUS_FMT_SGRBG10_DPCM8_1X8,
+			[AR0234_MODEL_COLOUR] = MEDIA_BUS_FMT_SGRBG10_DPCM8_1X8,
 		},
 	},
 };
@@ -202,11 +196,12 @@ struct ar0234 {
 	struct regulator_bulk_data supplies[ARRAY_SIZE(ar0234_supply_names)];
 	struct gpio_desc *reset;
 
-	unsigned int num_data_lanes;
+	struct v4l2_fwnode_endpoint ep_cfg;
 
-	s64 link_freqs[AR0234_LINK_FREQ_IDX_MAX];
+	u64 valid_link_freqs[ARRAY_SIZE(ar0234_modes)];
+	u32 valid_formats;
 
-	enum ar0234_colour_variant variant;
+	enum ar0234_colour_model model;
 
 	struct ccs_pll pll;
 
@@ -265,16 +260,19 @@ static const struct ccs_pll_limits ar0234_pll_limits = {
 	},
 };
 
-static int ar0234_calculate_pll(struct ar0234 *ar0234,
-				const struct ar0234_mode *mode)
+static int ar0234_pll_calculate(struct ar0234 *ar0234,
+				const struct ar0234_mode *mode,
+				unsigned int link_freq_idx)
 {
+	unsigned int num_lanes = ar0234->ep_cfg.bus.mipi_csi2.num_data_lanes;
+	u64 link_freq = ar0234->ep_cfg.link_frequencies[link_freq_idx];
 	struct ccs_pll pll = { 0 };
 	int ret;
 
 	pll.bus_type = CCS_PLL_BUS_TYPE_CSI2_DPHY;
-	pll.op_lanes = ar0234->num_data_lanes;
+	pll.op_lanes = num_lanes;
 	pll.vt_lanes = 1;
-	pll.csi2.lanes = ar0234->num_data_lanes;
+	pll.csi2.lanes = num_lanes;
 	pll.binning_horizontal = 1;
 	pll.binning_vertical = 1;
 	pll.scale_m = 1;
@@ -285,7 +283,7 @@ static int ar0234_calculate_pll(struct ar0234 *ar0234,
 		    CCS_PLL_FLAG_FIFO_DERATING |
 		    CCS_PLL_FLAG_FIFO_OVERRATING |
 		    CCS_PLL_FLAG_EXT_IP_PLL_DIVIDER;
-	pll.link_freq = ar0234->link_freqs[mode->link_freq_index] / 2;
+	pll.link_freq = link_freq / 2;
 	pll.ext_clk_freq_hz = clk_get_rate(ar0234->clk);
 
 	ret = ccs_pll_calculate(ar0234->sd.dev, &ar0234_pll_limits, &pll);
@@ -293,6 +291,44 @@ static int ar0234_calculate_pll(struct ar0234 *ar0234,
 		ar0234->pll = pll;
 
 	return ret;
+}
+
+static int ar0234_pll_update(struct ar0234 *ar0234,
+			     const struct ar0234_mode *mode)
+{
+	u32 idx = ar0234->link_freq->val;
+	u64 pixel_rate;
+	int ret;
+
+	ret = ar0234_pll_calculate(ar0234, mode, idx);
+	if (ret) {
+		dev_err(ar0234->sd.dev,
+			"PLL calculation failed for freq index %u\n", idx);
+
+		return ret;
+	}
+
+	pixel_rate = ar0234->ep_cfg.link_frequencies[idx] * 2;
+	pixel_rate *= ar0234->ep_cfg.bus.mipi_csi2.num_data_lanes;
+	do_div(pixel_rate, mode->bpp_out);
+	__v4l2_ctrl_s_ctrl_int64(ar0234->pixel_rate, pixel_rate);
+
+	return 0;
+}
+
+static void ar0234_update_link_freqs(struct ar0234 *ar0234,
+				     const struct ar0234_mode *mode)
+{
+	unsigned int index = mode - ar0234_modes;
+	u64 mask = ar0234->valid_link_freqs[index];
+	unsigned int min, max;
+
+	if (!mask)
+		return;
+
+	min = __ffs(mask);
+	max = __fls(mask);
+	__v4l2_ctrl_modify_range(ar0234->link_freq, min, max, ~mask, min);
 }
 
 static u8 ar0234_mfr_30ba_bits(u32 pixel_rate, u8 val)
@@ -380,17 +416,37 @@ static int ar0234_set_ctrl(struct v4l2_ctrl *ctrl)
 			return ret;
 	}
 
+	if (v4l2_subdev_is_streaming(sd)) {
+		switch (ctrl->id) {
+		case V4L2_CID_LINK_FREQ:
+		case V4L2_CID_HFLIP:
+		case V4L2_CID_VFLIP:
+			return -EBUSY;
+		default:
+			break;
+		}
+	}
+
+	if (ctrl->id == V4L2_CID_LINK_FREQ) {
+		unsigned int mode_idx = ar0234->mode - ar0234_modes;
+
+		if (!(ar0234->valid_link_freqs[mode_idx] & BIT_ULL(ctrl->val)))
+			return -EINVAL;
+
+		return ar0234_pll_update(ar0234, ar0234->mode);
+	}
+
 	if (!pm_runtime_get_if_active(sd->dev))
 		return 0;
 
 	switch (ctrl->id) {
 	case V4L2_CID_HBLANK:
 		cci_write(ar0234->regmap, AR0234_REG_LINE_LENGTH_PCK,
-			  (crop->width / 4) + ctrl->val, &ret);
+			  (crop->width + ctrl->val) / 4, &ret);
 		break;
 	case V4L2_CID_VBLANK:
 		cci_write(ar0234->regmap, AR0234_REG_FRAME_LENGTH_LINES,
-			  crop->height + ctrl->val, &ret);
+			  crop->height + ctrl->val - 5, &ret);
 		if (ret)
 			break;
 		ctrl = ar0234->exposure;
@@ -404,10 +460,6 @@ static int ar0234_set_ctrl(struct v4l2_ctrl *ctrl)
 		break;
 	case V4L2_CID_HFLIP:
 	case V4L2_CID_VFLIP:
-		if (v4l2_subdev_is_streaming(sd)) {
-			ret = -EBUSY;
-			break;
-		}
 		cci_write(ar0234->regmap, AR0234_REG_IMAGE_ORIENTATION,
 			  (ar0234->vflip->val << 1) | ar0234->hflip->val, &ret);
 		break;
@@ -471,10 +523,13 @@ static int ar0234_enum_mbus_code(struct v4l2_subdev *sd,
 	if (code->index >= ARRAY_SIZE(ar0234_modes))
 		return -EINVAL;
 
-	if (!ar0234_modes[code->index].code[ar0234->variant])
+	if (!ar0234_modes[code->index].code[ar0234->model])
 		return -EINVAL;
 
-	code->code = ar0234_modes[code->index].code[ar0234->variant];
+	if (!(ar0234->valid_formats & BIT(code->index)))
+		return -EINVAL;
+
+	code->code = ar0234_modes[code->index].code[ar0234->model];
 
 	return 0;
 }
@@ -490,9 +545,9 @@ static int ar0234_enum_frame_size(struct v4l2_subdev *sd,
 		return -EINVAL;
 
 	for (i = 0; i < ARRAY_SIZE(ar0234_modes); i++)
-		if (ar0234_modes[i].code[ar0234->variant] == fse->code)
+		if (ar0234_modes[i].code[ar0234->model] == fse->code)
 			break;
-	if (i == ARRAY_SIZE(ar0234_modes))
+	if (i == ARRAY_SIZE(ar0234_modes) || !(ar0234->valid_formats & BIT(i)))
 		return -EINVAL;
 
 	fse->min_width = AR0234_PIXEL_ARRAY_WIDTH;
@@ -503,27 +558,15 @@ static int ar0234_enum_frame_size(struct v4l2_subdev *sd,
 	return 0;
 }
 
-static void ar0234_set_link_limits(struct ar0234 *ar0234)
-{
-	u64 pixel_rate = ar0234->link_freqs[ar0234->mode->link_freq_index] * 2;
-
-	pixel_rate *= ar0234->num_data_lanes;
-	do_div(pixel_rate, ar0234->mode->bpp_out);
-
-	__v4l2_ctrl_s_ctrl_int64(ar0234->pixel_rate, pixel_rate);
-
-	__v4l2_ctrl_s_ctrl(ar0234->link_freq, ar0234->mode->link_freq_index);
-}
-
 static void ar0234_set_framing_limits(struct ar0234 *ar0234, u32 width)
 {
 	int hblank;
 
-	__v4l2_ctrl_s_ctrl(ar0234->vblank, AR0234_FRAME_LENGTH_LINES_MIN);
+	__v4l2_ctrl_s_ctrl(ar0234->vblank, AR0234_VBLANK_MIN);
 
-	hblank = AR0234_LINE_LENGTH_PCK_MIN - width / 4;
+	hblank = AR0234_LINE_LENGTH_PCK_MIN * 4 - width;
 	__v4l2_ctrl_modify_range(ar0234->hblank, AR0234_HBLANK_MIN,
-				 AR0234_HBLANK_MAX, 2, hblank);
+				 AR0234_HBLANK_MAX, 4, hblank);
 	__v4l2_ctrl_s_ctrl(ar0234->hblank, hblank);
 }
 
@@ -541,9 +584,9 @@ static int ar0234_set_pad_format(struct v4l2_subdev *sd,
 		return -EBUSY;
 
 	for (i = 0; i < ARRAY_SIZE(ar0234_modes); i++) {
-		if (!ar0234_modes[i].code[ar0234->variant])
+		if (!ar0234_modes[i].code[ar0234->model])
 			continue;
-		if (ar0234_modes[i].code[ar0234->variant] == fmt->format.code) {
+		if (ar0234_modes[i].code[ar0234->model] == fmt->format.code) {
 			mode = &ar0234_modes[i];
 			break;
 		}
@@ -553,7 +596,7 @@ static int ar0234_set_pad_format(struct v4l2_subdev *sd,
 
 	fmt->format.width = crop->width;
 	fmt->format.height = crop->height;
-	fmt->format.code = mode->code[ar0234->variant];
+	fmt->format.code = mode->code[ar0234->model];
 	fmt->format.field = V4L2_FIELD_NONE;
 	fmt->format.colorspace = V4L2_COLORSPACE_RAW;
 	fmt->format.ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
@@ -563,16 +606,11 @@ static int ar0234_set_pad_format(struct v4l2_subdev *sd,
 	*v4l2_subdev_state_get_format(state, fmt->pad) = fmt->format;
 
 	if (ar0234->mode != mode && fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE) {
-		int ret = ar0234_calculate_pll(ar0234, mode);
-
-		if (ret) {
-			dev_err(sd->dev, "PLL recalculation failed: %d\n", ret);
-			return -EINVAL;
-		}
+		ar0234_update_link_freqs(ar0234, mode);
 
 		ar0234->mode = mode;
 
-		ar0234_set_link_limits(ar0234);
+		ar0234_pll_update(ar0234, mode);
 		ar0234_set_framing_limits(ar0234, crop->width);
 	}
 
@@ -682,7 +720,7 @@ static int ar0234_init_state(struct v4l2_subdev *sd,
 	struct ar0234 *ar0234 = to_ar0234(sd);
 	struct v4l2_subdev_format format = {
 		.format = {
-			.code = ar0234_modes[0].code[ar0234->variant],
+			.code = ar0234_modes[0].code[ar0234->model],
 			.width = AR0234_PIXEL_ARRAY_WIDTH,
 			.height = AR0234_PIXEL_ARRAY_HEIGHT,
 		},
@@ -690,6 +728,9 @@ static int ar0234_init_state(struct v4l2_subdev *sd,
 
 	ar0234_set_selection(sd, state, &sel);
 	ar0234_set_pad_format(sd, state, &format);
+
+	ar0234_update_link_freqs(ar0234, &ar0234_modes[0]);
+	ar0234_pll_update(ar0234, &ar0234_modes[0]);
 
 	return 0;
 }
@@ -733,7 +774,8 @@ static int ar0234_enable_streams(struct v4l2_subdev *sd,
 		  &ret);
 
 	cci_write(ar0234->regmap, AR0234_REG_SERIAL_FORMAT,
-		  DATA_FORMAT_LANES(ar0234->num_data_lanes), &ret);
+		  DATA_FORMAT_LANES(ar0234->ep_cfg.bus.mipi_csi2.num_data_lanes),
+		  &ret);
 
 	cci_write(ar0234->regmap, AR0234_REG_MIPI_CNTRL,
 		  ar0234->mode->mipi_dt, &ret);
@@ -788,8 +830,7 @@ static int ar0234_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad,
 	struct ar0234 *ar0234 = to_ar0234(sd);
 
 	config->type = V4L2_MBUS_CSI2_DPHY;
-	config->bus.mipi_csi2.flags = 0;
-	config->bus.mipi_csi2.num_data_lanes = ar0234->num_data_lanes;
+	config->bus.mipi_csi2 = ar0234->ep_cfg.bus.mipi_csi2;
 
 	return 0;
 }
@@ -804,7 +845,7 @@ static int ar0234_get_frame_desc(struct v4l2_subdev *sd, unsigned int pad,
 
 	memset(fd->entry, 0, sizeof(fd->entry));
 
-	fd->entry[0].pixelcode = ar0234->mode->code[ar0234->variant];
+	fd->entry[0].pixelcode = ar0234->mode->code[ar0234->model];
 	fd->entry[0].bus.csi2.dt = ar0234->mode->mipi_dt;
 
 	return 0;
@@ -857,21 +898,18 @@ static int ar0234_ctrls_init(struct ar0234 *ar0234)
 	ar0234->link_freq =
 		v4l2_ctrl_new_int_menu(&ar0234->ctrls, &ar0234_ctrl_ops,
 				       V4L2_CID_LINK_FREQ,
-				       AR0234_LINK_FREQ_IDX_MAX - 1, 0,
-				       ar0234->link_freqs);
-	if (ar0234->link_freq)
-		ar0234->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+				       ar0234->ep_cfg.nr_of_link_frequencies - 1,
+				       0, ar0234->ep_cfg.link_frequencies);
 
 	ar0234->hblank = v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops,
 					   V4L2_CID_HBLANK, AR0234_HBLANK_MIN,
-					   AR0234_HBLANK_MAX, 2,
+					   AR0234_HBLANK_MAX, 4,
 					   AR0234_HBLANK_MIN);
 
 	ar0234->vblank = v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops,
-					   V4L2_CID_VBLANK,
-					   AR0234_FRAME_LENGTH_LINES_MIN,
+					   V4L2_CID_VBLANK, AR0234_VBLANK_MIN,
 					   AR0234_VBLANK_MAX, 1,
-					   AR0234_FRAME_LENGTH_LINES_MIN);
+					   AR0234_VBLANK_MIN);
 
 	ar0234->exposure = v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops,
 					     V4L2_CID_EXPOSURE,
@@ -929,7 +967,7 @@ static int ar0234_ctrls_init(struct ar0234 *ar0234)
 
 	ar0234->sd.ctrl_handler = &ar0234->ctrls;
 
-	ar0234_set_link_limits(ar0234);
+	ar0234_update_link_freqs(ar0234, &ar0234_modes[0]);
 	ar0234_set_framing_limits(ar0234, AR0234_PIXEL_ARRAY_WIDTH);
 
 	return 0;
@@ -937,9 +975,7 @@ static int ar0234_ctrls_init(struct ar0234 *ar0234)
 
 static int ar0234_parse_hw_config(struct ar0234 *ar0234)
 {
-	struct v4l2_fwnode_endpoint bus_cfg = {
-		.bus_type = V4L2_MBUS_CSI2_DPHY,
-	};
+	struct v4l2_fwnode_endpoint *ep_cfg = &ar0234->ep_cfg;
 	struct fwnode_handle *ep;
 	unsigned int i;
 	int ret;
@@ -969,32 +1005,34 @@ static int ar0234_parse_hw_config(struct ar0234 *ar0234)
 	if (!ep)
 		return -ENXIO;
 
-	ret = v4l2_fwnode_endpoint_alloc_parse(ep, &bus_cfg);
+	ep_cfg->bus_type = V4L2_MBUS_CSI2_DPHY;
+
+	ret = v4l2_fwnode_endpoint_alloc_parse(ep, ep_cfg);
 	fwnode_handle_put(ep);
 	if (ret)
 		return ret;
 
-	switch (bus_cfg.bus.mipi_csi2.num_data_lanes) {
+	switch (ep_cfg->bus.mipi_csi2.num_data_lanes) {
 	case 2:
 	case 4:
-		ar0234->num_data_lanes = bus_cfg.bus.mipi_csi2.num_data_lanes;
 		break;
 	default:
 		ret = dev_err_probe(ar0234->sd.dev, -EINVAL,
 				    "Invalid number of CSI2 data lanes %d\n",
-		      bus_cfg.bus.mipi_csi2.num_data_lanes);
+				    ep_cfg->bus.mipi_csi2.num_data_lanes);
 		goto done_endpoint_free;
 	}
 
-	if (bus_cfg.nr_of_link_frequencies != AR0234_LINK_FREQ_IDX_MAX) {
+	if (ep_cfg->nr_of_link_frequencies < 1 ||
+	    ep_cfg->nr_of_link_frequencies > BITS_PER_TYPE(u64)) {
 		ret = dev_err_probe(ar0234->sd.dev, -EINVAL,
-				    "Invalid number of link freq items %d\n",
-				    bus_cfg.nr_of_link_frequencies);
+				    "Invalid number of link frequencies %u\n",
+				    ep_cfg->nr_of_link_frequencies);
 		goto done_endpoint_free;
 	}
 
-	for (i = 0; i < bus_cfg.nr_of_link_frequencies; i++) {
-		s64 freq = bus_cfg.link_frequencies[i];
+	for (i = 0; i < ep_cfg->nr_of_link_frequencies; i++) {
+		s64 freq = ep_cfg->link_frequencies[i];
 
 		if (freq < 360000000LL || freq > 450000000LL) {
 			ret = dev_err_probe(ar0234->sd.dev, -EINVAL,
@@ -1002,18 +1040,43 @@ static int ar0234_parse_hw_config(struct ar0234 *ar0234)
 					    freq);
 			goto done_endpoint_free;
 		}
-
-		ar0234->link_freqs[i] = freq;
 	}
 
+	for (i = 0; i < ARRAY_SIZE(ar0234_modes); i++) {
+		unsigned int j;
+
+		for (j = 0; j < ep_cfg->nr_of_link_frequencies; j++) {
+			if (!ar0234_pll_calculate(ar0234, &ar0234_modes[i], j))
+				ar0234->valid_link_freqs[i] |= BIT_ULL(j);
+		}
+
+		if (ar0234->valid_link_freqs[i]) {
+			ar0234->valid_formats |= BIT(i);
+			continue;
+		}
+
+		dev_warn(ar0234->sd.dev,
+			 "No valid link frequency for mode %u (mbus 0x%08x)\n",
+			 i,  ar0234_modes[i].code[ar0234->model]);
+	}
+
+	if (!ar0234->valid_formats) {
+		ret = dev_err_probe(ar0234->sd.dev, -EINVAL,
+				    "No valid link frequency for any format\n");
+		goto done_endpoint_free;
+	}
+
+	return 0;
+
 done_endpoint_free:
-	v4l2_fwnode_endpoint_free(&bus_cfg);
+	v4l2_fwnode_endpoint_free(ep_cfg);
 
 	return ret;
 }
 
 static int ar0234_identify_module(struct ar0234 *ar0234)
 {
+	const enum ar0234_colour_model *forced;
 	u64 id, rev;
 	int ret;
 
@@ -1023,18 +1086,28 @@ static int ar0234_identify_module(struct ar0234 *ar0234)
 		return dev_err_probe(ar0234->sd.dev, ret,
 				     "Failed to read chip id\n");
 
+	dev_info(ar0234->sd.dev, "Success reading chip id: 0x%04x, Rev.%lld\n",
+		 (u16)id, (rev >> 12) & 0xf);
+
 	if (id == AR0234_CHIP_ID_MONO)
-		ar0234->variant = AR0234_VARIANT_MONO;
+		ar0234->model = AR0234_MODEL_MONO;
 	else if (id == AR0234_CHIP_ID)
-		ar0234->variant = AR0234_VARIANT_COLOUR;
+		ar0234->model = AR0234_MODEL_COLOUR;
 	else
 		return dev_err_probe(ar0234->sd.dev, -ENODEV,
 				     "Invalid chip id: 0x%04x\n", (u16)id);
 
-	dev_info(ar0234->sd.dev, "Success reading chip id: 0x%04x, Rev.%lld\n",
-		 (u16)id, (rev >> 12) & 0xf);
+	forced = device_get_match_data(ar0234->sd.dev);
 
-	return ret;
+	if (forced && *forced != ar0234->model) {
+		ar0234->model = *forced;
+
+		dev_warn(ar0234->sd.dev,
+			 "Chip does not match forced model %s\n",
+			 *forced == AR0234_MODEL_MONO ? "mono" : "colour");
+	}
+
+	return 0;
 }
 
 static int ar0234_power_on(struct device *dev)
@@ -1141,16 +1214,16 @@ static int ar0234_probe(struct i2c_client *client)
 
 	ar0234->mode = &ar0234_modes[0];
 
-	ret = ar0234_calculate_pll(ar0234, ar0234->mode);
-	if (ret) {
-		dev_err_probe(dev, ret, "PLL calculations failed\n");
-		goto error_pm;
-	}
-
 	ar0234->sd.internal_ops = &ar0234_internal_ops;
 	ar0234->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 	ar0234->sd.entity.ops = &ar0234_subdev_entity_ops;
 	ar0234->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
+
+	ret = ar0234_ctrls_init(ar0234);
+	if (ret)
+		goto error_media;
+
+	ar0234->sd.state_lock = ar0234->ctrls.lock;
 
 	ar0234->pad.flags = MEDIA_PAD_FL_SOURCE;
 	ret = media_entity_pads_init(&ar0234->sd.entity, 1, &ar0234->pad);
@@ -1164,12 +1237,6 @@ static int ar0234_probe(struct i2c_client *client)
 		dev_err_probe(dev, ret, "Subdev init error\n");
 		goto error_media;
 	}
-
-	ret = ar0234_ctrls_init(ar0234);
-	if (ret)
-		goto error_media;
-
-	ar0234->sd.state_lock = ar0234->ctrls.lock;
 
 	ret = v4l2_async_register_subdev_sensor(&ar0234->sd);
 	if (ret) {
@@ -1188,6 +1255,7 @@ error_media:
 error_pm:
 	pm_runtime_disable(dev);
 	pm_runtime_put_noidle(dev);
+	v4l2_fwnode_endpoint_free(&ar0234->ep_cfg);
 	ar0234_power_off(dev);
 
 error_subdev:
@@ -1203,6 +1271,7 @@ static void ar0234_remove(struct i2c_client *client)
 
 	v4l2_async_unregister_subdev(sd);
 	ar0234_subdev_cleanup(ar0234);
+	v4l2_fwnode_endpoint_free(&ar0234->ep_cfg);
 
 	pm_runtime_disable(&client->dev);
 	if (!pm_runtime_status_suspended(&client->dev))
@@ -1217,9 +1286,9 @@ static const struct acpi_device_id ar0234_acpi_ids[] = {
 MODULE_DEVICE_TABLE(acpi, ar0234_acpi_ids);
 
 static const struct of_device_id ar0234_dt_ids[] = {
-	{ .compatible = "onnn,ar0234cs" },
-	{ .compatible = "onnn,ar0234cssc" },
-	{ .compatible = "onnn,ar0234cssm" },
+	{ .compatible = "onnn,ar0234cs", .data = NULL, },
+	{ .compatible = "onnn,ar0234cssc", .data = &ar0234_model_colour, },
+	{ .compatible = "onnn,ar0234cssm", .data = &ar0234_model_mono, },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, ar0234_dt_ids);
