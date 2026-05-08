@@ -62,7 +62,7 @@ static int rkisp_params_querycap(struct file *file,
 		 params_vdev->dev->isp_ver >> 4);
 	strscpy(cap->card, vdev->name, sizeof(cap->card));
 	strscpy(cap->bus_info, "platform: " DRIVER_NAME, sizeof(cap->bus_info));
-	cap->version = RKISP_DRIVER_VERSION;
+
 	return 0;
 }
 
