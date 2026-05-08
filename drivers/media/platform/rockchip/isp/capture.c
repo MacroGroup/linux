@@ -648,16 +648,8 @@ static int rkisp_set_fmt(struct rkisp_stream *stream,
 	u32 i, planes, imagsize = 0, xsubs = 1, ysubs = 1;
 
 	fmt = find_fmt(stream, pixm->pixelformat);
-	if (!fmt) {
-		v4l2_err(&dev->v4l2_dev,
-			 "%s nonsupport pixelformat:%c%c%c%c\n",
-			 node->vdev.name,
-			 pixm->pixelformat,
-			 pixm->pixelformat >> 8,
-			 pixm->pixelformat >> 16,
-			 pixm->pixelformat >> 24);
-		return -EINVAL;
-	}
+	if (!fmt)
+		fmt = &stream->config->fmts[0];
 
 	/* do checks on resolution */
 	restrict_rsz_resolution(stream, config, &max_rsz);

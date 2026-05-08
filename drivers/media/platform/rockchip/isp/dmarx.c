@@ -750,15 +750,8 @@ static int rkisp_set_fmt(struct rkisp_stream *stream,
 	unsigned int i;
 
 	fmt = find_fmt(stream, pixm->pixelformat);
-	if (!fmt) {
-		v4l2_err(&stream->ispdev->v4l2_dev,
-			 "nonsupport pixelformat:%c%c%c%c\n",
-			 pixm->pixelformat,
-			 pixm->pixelformat >> 8,
-			 pixm->pixelformat >> 16,
-			 pixm->pixelformat >> 24);
-		return -EINVAL;
-	}
+	if (!fmt)
+		fmt = &stream->config->fmts[0];
 
 	pixm->num_planes = fmt->mplanes;
 	pixm->field = V4L2_FIELD_NONE;
