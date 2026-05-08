@@ -85,8 +85,8 @@
 #	define AR0234_GAIN_MAX				0x07ff
 #	define AR0234_GAIN_DEFAULT			0x0080
 #define AR0234_REG_ANALOG_GAIN				CCI_REG16(0x3060)
-#	define AR0234_ANA_GAIN_MIN			0
-#	define AR0234_ANA_GAIN_MAX			0x4f
+#	define AR0234_ANA_GAIN_MIN			0x0d
+#	define AR0234_ANA_GAIN_MAX			0x40
 #	define AR0234_ANA_GAIN_DEFAULT			0x0e
 #define AR0234_REG_TEST_PATTERN_MODE			CCI_REG16(0x3070)
 #	define AR0234_TEST_PATTERN_DISABLED		0
@@ -101,6 +101,8 @@
 #	define AR0234_TESTP_COLOUR_MIN			0
 #	define AR0234_TESTP_COLOUR_MAX			0x3ff
 #	define AR0234_TESTP_COLOUR_STEP			1
+#define AR0234_REG_DIGITAL_TEST				CCI_REG16(0x30b0)
+#	define DIGITAL_TEST_MONO_CHROME_OPERATION	BIT(7)
 #define AR0234_REG_MFR_30BA				CCI_REG16(0x30ba)
 #	define AR0234_MFR_30BA_GAIN_BITS(x)		(0x7620 | (x))
 #define AR0234_REG_DATA_FORMAT_BITS			CCI_REG16(0x31ac)
@@ -112,7 +114,8 @@
 #define AR0234_REG_MIPI_CNTRL				CCI_REG16(0x3354)
 
 static const struct cci_reg_sequence ar0234_common_init[] = {
-	{ AR0234_REG_FINE_INTEGRATION_TIME, 0 },
+	{ AR0234_REG_FINE_INTEGRATION_TIME, 0x0000 },
+	{ AR0234_REG_DIGITAL_TEST, 0x0028 },
 };
 
 static const char *const ar0234_test_pattern_menu[] = {
@@ -300,32 +303,13 @@ static int ar0234_calculate_pll(struct ar0234 *ar0234,
 
 static u8 ar0234_mfr_30ba_bits(u32 pixel_rate, u8 val)
 {
-	u32 coarse = (val >> 4) & 0x7;
-
 	if (pixel_rate <= 22500000)
 		return 6;
 
-	if (pixel_rate <= 45000000) {
-		u32 fine = val & 0xf;
+	if (pixel_rate <= 45000000)
+		return (val <= 0x34) ? 6 : 0;
 
-		if (coarse <= 1)
-			return 6;
-
-		if (coarse == 2) {
-			if (fine <= 0x2f)
-				return 1;
-		} else if (coarse == 3) {
-			if (fine <= 0x2f)
-				return 1;
-
-			if (fine >= 0x30 && fine <= 0x3b)
-				return 1;
-		}
-
-		return 0;
-	}
-
-	return (coarse == 0) ? 2 : (coarse == 1) ? 1 : 0;
+	return (((val >> 4) & 0x7) < 2) ? 2 : (val <= 0x38) ? 1 : 0;
 }
 
 static int ar0234_set_mfr_30ba(struct ar0234 *ar0234, u32 val)
@@ -691,10 +675,8 @@ static int ar0234_init_state(struct v4l2_subdev *sd,
 		.r.width = AR0234_PIXEL_ARRAY_WIDTH,
 		.r.height = AR0234_PIXEL_ARRAY_HEIGHT,
 	};
-	struct ar0234 *ar0234 = to_ar0234(sd);
 	struct v4l2_subdev_format format = {
 		.format = {
-			.code = ar0234_modes[0].code[ar0234->model],
 			.width = AR0234_PIXEL_ARRAY_WIDTH,
 			.height = AR0234_PIXEL_ARRAY_HEIGHT,
 		},
@@ -744,6 +726,11 @@ static int ar0234_enable_streams(struct v4l2_subdev *sd,
 			    ARRAY_SIZE(ar0234_common_init), &ret);
 
 	cci_write(ar0234->regmap, AR0234_REG_COMPANDING, mode->dpcm, &ret);
+
+	cci_update_bits(ar0234->regmap, AR0234_REG_DIGITAL_TEST,
+			DIGITAL_TEST_MONO_CHROME_OPERATION,
+			ar0234->model == AR0234_MODEL_MONO ?
+			DIGITAL_TEST_MONO_CHROME_OPERATION : 0, &ret);
 
 	cci_write(ar0234->regmap, AR0234_REG_DATA_FORMAT_BITS,
 		  DATA_FORMAT_BITS(mode->bpp_in, mode->bpp_out), &ret);
@@ -921,11 +908,11 @@ static int ar0234_ctrls_init(struct ar0234 *ar0234)
 
 	v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops,
 			  V4L2_CID_RED_BALANCE, AR0234_GAIN_MIN,
-		   AR0234_GAIN_MAX, 1, AR0234_GAIN_DEFAULT);
+			  AR0234_GAIN_MAX, 1, AR0234_GAIN_DEFAULT);
 
 	v4l2_ctrl_new_std(&ar0234->ctrls, &ar0234_ctrl_ops,
 			  V4L2_CID_DIGITAL_GAIN, AR0234_GAIN_MIN,
-		   AR0234_GAIN_MAX, 1, AR0234_GAIN_DEFAULT);
+			  AR0234_GAIN_MAX, 1, AR0234_GAIN_DEFAULT);
 
 	v4l2_ctrl_new_std_menu_items(&ar0234->ctrls, &ar0234_ctrl_ops,
 				     V4L2_CID_TEST_PATTERN,
@@ -1048,9 +1035,6 @@ static int ar0234_identify_module(struct ar0234 *ar0234)
 		return dev_err_probe(ar0234->sd.dev, ret,
 				     "Failed to read chip id\n");
 
-	dev_info(ar0234->sd.dev, "Success reading chip id: 0x%04x, Rev.%lld\n",
-		 (u16)id, (rev >> 12) & 0xf);
-
 	if (id == AR0234_CHIP_ID_MONO)
 		ar0234->model = AR0234_MODEL_MONO;
 	else if (id == AR0234_CHIP_ID)
@@ -1059,13 +1043,16 @@ static int ar0234_identify_module(struct ar0234 *ar0234)
 		return dev_err_probe(ar0234->sd.dev, -ENODEV,
 				     "Invalid chip id: 0x%04x\n", (u16)id);
 
+	dev_info(ar0234->sd.dev, "Success reading chip id: 0x%04x, Rev.%lld\n",
+		 (u16)id, (rev >> 12) & 0xf);
+
 	forced = device_get_match_data(ar0234->sd.dev);
 
 	if (forced && *forced != ar0234->model) {
 		ar0234->model = *forced;
 
 		dev_warn(ar0234->sd.dev,
-			 "Chip does not match forced model %s\n",
+			 "Chip id does not match forced \"%s\" model\n",
 			 *forced == AR0234_MODEL_MONO ? "mono" : "colour");
 	}
 
@@ -1158,7 +1145,7 @@ static int ar0234_probe(struct i2c_client *client)
 
 	ret = ar0234_power_on(dev);
 	if (ret)
-		goto error_subdev;
+		goto error_ep;
 
 	pm_runtime_set_active(dev);
 	pm_runtime_get_noresume(dev);
@@ -1187,7 +1174,7 @@ static int ar0234_probe(struct i2c_client *client)
 
 	ret = ar0234_ctrls_init(ar0234);
 	if (ret)
-		goto error_media;
+		goto error_pm;
 
 	ar0234->sd.state_lock = ar0234->ctrls.lock;
 
@@ -1221,8 +1208,10 @@ error_media:
 error_pm:
 	pm_runtime_disable(dev);
 	pm_runtime_put_noidle(dev);
-	v4l2_fwnode_endpoint_free(&ar0234->ep_cfg);
 	ar0234_power_off(dev);
+
+error_ep:
+	v4l2_fwnode_endpoint_free(&ar0234->ep_cfg);
 
 error_subdev:
 	ar0234_subdev_cleanup(ar0234);
