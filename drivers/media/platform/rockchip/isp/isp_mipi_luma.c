@@ -67,7 +67,6 @@ static const struct v4l2_ioctl_ops rkisp_luma_ioctl = {
 	.vidioc_qbuf = vb2_ioctl_qbuf,
 	.vidioc_dqbuf = vb2_ioctl_dqbuf,
 	.vidioc_prepare_buf = vb2_ioctl_prepare_buf,
-	.vidioc_expbuf = vb2_ioctl_expbuf,
 	.vidioc_streamon = vb2_ioctl_streamon,
 	.vidioc_streamoff = vb2_ioctl_streamoff,
 	.vidioc_enum_fmt_meta_cap = rkisp_luma_enum_fmt_meta_cap,
