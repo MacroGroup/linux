@@ -235,8 +235,8 @@ static int csi2_dphy_s_stream_stop(struct v4l2_subdev *sd)
 
 	dphy->is_streaming = false;
 
-	dev_info(dphy->dev, "%s stream stop, dphy%d\n",
-		 __func__, dphy->phy_index);
+	dev_dbg(dphy->dev, "%s stream stop, dphy%d\n",
+		__func__, dphy->phy_index);
 
 	return 0;
 }
@@ -253,8 +253,8 @@ static int csi2_dphy_s_stream(struct v4l2_subdev *sd, int on)
 		ret = csi2_dphy_s_stream_stop(sd);
 	mutex_unlock(&dphy->mutex);
 
-	dev_info(dphy->dev, "%s stream on:%d, dphy%d\n",
-		 __func__, on, dphy->phy_index);
+	dev_dbg(dphy->dev, "%s stream on:%d, dphy%d\n",
+		__func__, on, dphy->phy_index);
 
 	return ret;
 }
