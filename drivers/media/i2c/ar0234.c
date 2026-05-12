@@ -521,14 +521,12 @@ static void ar0234_set_link_limits(struct ar0234 *ar0234,
 
 static void ar0234_set_framing_limits(struct ar0234 *ar0234, u32 width)
 {
-	int hblank;
+	int hblank = AR0234_LINE_LENGTH_PCK_MIN * 4 - width;
 
 	__v4l2_ctrl_s_ctrl(ar0234->vblank, AR0234_VBLANK_MIN);
 
-	hblank = AR0234_LINE_LENGTH_PCK_MIN * 4 - width;
 	__v4l2_ctrl_modify_range(ar0234->hblank, AR0234_HBLANK_MIN,
 				 AR0234_HBLANK_MAX, 4, hblank);
-	__v4l2_ctrl_s_ctrl(ar0234->hblank, hblank);
 }
 
 static int ar0234_set_pad_format(struct v4l2_subdev *sd,
@@ -696,12 +694,12 @@ static int ar0234_enable_streams(struct v4l2_subdev *sd,
 	const struct v4l2_rect *crop;
 	int x_addr_start, x_addr_end, y_addr_start, y_addr_end, ret;
 
+	if (streams_mask != 1)
+		return -EINVAL;
+
 	crop = v4l2_subdev_state_get_crop(state, pad);
 	fmt = v4l2_subdev_state_get_format(state, pad);
 	mode = ar0234_mode_from_code(ar0234, fmt->code, true);
-
-	if (streams_mask != 1)
-		return -EINVAL;
 
 	ret = pm_runtime_resume_and_get(sd->dev);
 	if (ret)
