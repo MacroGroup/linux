@@ -1094,7 +1094,7 @@ static struct iommu_domain *rk_iommu_domain_alloc_paging(struct device *dev)
 	struct rk_iommu_domain *rk_domain;
 	struct rk_iommu *iommu;
 
-	rk_domain = kzalloc(sizeof(*rk_domain), GFP_KERNEL);
+	rk_domain = kzalloc_obj(*rk_domain);
 	if (!rk_domain)
 		return NULL;
 

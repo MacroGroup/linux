@@ -296,8 +296,10 @@ static int csi2_dphy_s_power(struct v4l2_subdev *sd, int on)
 
 	if (on)
 		return pm_runtime_get_sync(dphy->dev);
-	else
-		return pm_runtime_put(dphy->dev);
+
+	pm_runtime_put(dphy->dev);
+
+	return 0;
 }
 
 static __maybe_unused int csi2_dphy_runtime_suspend(struct device *dev)
