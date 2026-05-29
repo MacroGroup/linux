@@ -980,7 +980,6 @@ static int rockchip_csi2_dphy_hw_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct csi2_dphy_hw *dphy_hw;
 	struct regmap *grf;
-	struct resource *res;
 	const struct of_device_id *of_id;
 	const struct dphy_hw_drv_data *drv_data;
 
@@ -1028,18 +1027,10 @@ static int rockchip_csi2_dphy_hw_probe(struct platform_device *pdev)
 	dphy_hw->txrx_regs = drv_data->txrx_regs;
 	dphy_hw->csi2dphy_regs = drv_data->csi2dphy_regs;
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	dphy_hw->hw_base_addr = devm_ioremap_resource(dev, res);
-	if (IS_ERR(dphy_hw->hw_base_addr)) {
-		resource_size_t offset = res->start;
-		resource_size_t size = resource_size(res);
+	dphy_hw->hw_base_addr = devm_platform_ioremap_resource(pdev, 0);
+	if (IS_ERR(dphy_hw->hw_base_addr))
+		return PTR_ERR(dphy_hw->hw_base_addr);
 
-		dphy_hw->hw_base_addr = devm_ioremap(dev, offset, size);
-		if (IS_ERR(dphy_hw->hw_base_addr)) {
-			dev_err(dev, "Can't find csi2 dphy hw addr!\n");
-			return -ENODEV;
-		}
-	}
 	dphy_hw->stream_on = drv_data->stream_on;
 	dphy_hw->stream_off = drv_data->stream_off;
 
@@ -1080,19 +1071,7 @@ static struct platform_driver rockchip_csi2_dphy_hw_driver = {
 		.of_match_table = rockchip_csi2_dphy_hw_match_id,
 	},
 };
-
-int rockchip_csi2_dphy_hw_init(void)
-{
-	return platform_driver_register(&rockchip_csi2_dphy_hw_driver);
-}
-
-#if defined(CONFIG_VIDEO_ROCKCHIP_THUNDER_BOOT_ISP) && !defined(CONFIG_INITCALL_ASYNC)
-subsys_initcall(rockchip_csi2_dphy_hw_init);
-#else
-#if !defined(CONFIG_VIDEO_REVERSE_IMAGE)
 module_platform_driver(rockchip_csi2_dphy_hw_driver);
-#endif
-#endif
 
 MODULE_AUTHOR("Rockchip Camera/ISP team");
 MODULE_DESCRIPTION("Rockchip MIPI CSI2 DPHY HW driver");
