@@ -3,7 +3,7 @@
  * drivers/uio/uio.c
  *
  * Copyright(C) 2005, Benedikt Spranger <b.spranger@linutronix.de>
- * Copyright(C) 2005, Thomas Gleixner <tglx@linutronix.de>
+ * Copyright(C) 2005, Linutronix GmbH, Thomas Gleixner <tglx@kernel.org>
  * Copyright(C) 2006, Hans J. Koch <hjk@hansjkoch.de>
  * Copyright(C) 2006, Greg Kroah-Hartman <greg@kroah.com>
  *
@@ -565,7 +565,7 @@ static __poll_t uio_poll(struct file *filep, poll_table *wait)
 
 	mutex_lock(&idev->info_lock);
 	if (!idev->info || !idev->info->irq)
-		ret = -EIO;
+		ret = EPOLLERR;
 	mutex_unlock(&idev->info_lock);
 
 	if (ret)

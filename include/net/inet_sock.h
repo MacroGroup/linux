@@ -19,6 +19,7 @@
 #include <linux/netdevice.h>
 
 #include <net/flow.h>
+#include <net/inet_dscp.h>
 #include <net/sock.h>
 #include <net/request_sock.h>
 #include <net/netns/hash.h>
@@ -172,7 +173,7 @@ struct inet_cork {
 	u8			tx_flags;
 	__u8			ttl;
 	__s16			tos;
-	char			priority;
+	u32			priority;
 	__u16			gso_size;
 	u32			ts_opt_id;
 	u64			transmit_time;
@@ -213,6 +214,7 @@ struct inet_sock {
 	struct sock		sk;
 #if IS_ENABLED(CONFIG_IPV6)
 	struct ipv6_pinfo	*pinet6;
+	struct ipv6_fl_socklist __rcu *ipv6_fl_list;
 #endif
 	/* Socket demultiplex comparisons on incoming packets. */
 #define inet_daddr		sk.__sk_common.skc_daddr
@@ -302,6 +304,11 @@ static inline unsigned long inet_cmsg_flags(const struct inet_sock *inet)
 	return READ_ONCE(inet->inet_flags) & IP_CMSG_ALL;
 }
 
+static inline dscp_t inet_sk_dscp(const struct inet_sock *inet)
+{
+	return inet_dsfield_to_dscp(READ_ONCE(inet->tos));
+}
+
 #define inet_test_bit(nr, sk)			\
 	test_bit(INET_FLAGS_##nr, &inet_sk(sk)->inet_flags)
 #define inet_set_bit(nr, sk)			\
@@ -347,14 +354,6 @@ static inline struct sock *skb_to_full_sk(const struct sk_buff *skb)
 }
 
 #define inet_sk(ptr) container_of_const(ptr, struct inet_sock, sk)
-
-static inline void __inet_sk_copy_descendant(struct sock *sk_to,
-					     const struct sock *sk_from,
-					     const int ancestor_size)
-{
-	memcpy(inet_sk(sk_to) + 1, inet_sk(sk_from) + 1,
-	       sk_from->sk_prot->obj_size - ancestor_size);
-}
 
 int inet_sk_rebuild_header(struct sock *sk);
 

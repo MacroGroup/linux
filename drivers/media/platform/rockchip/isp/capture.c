@@ -625,7 +625,7 @@ static void restrict_rsz_resolution(struct rkisp_stream *stream,
 
 		max_rsz->width = ALIGN(DIV_ROUND_UP(input_win->width, div), 4);
 		max_rsz->height = DIV_ROUND_UP(input_win->height, div);
-	} else if (dev->hw_dev->is_unite) {
+	} else if (dev->hw_dev->unite) {
 		/* scale down only for unite mode */
 		max_rsz->width = min_t(int, input_win->width, cfg->max_rsz_width);
 		max_rsz->height = min_t(int, input_win->height, cfg->max_rsz_height);
@@ -648,16 +648,8 @@ static int rkisp_set_fmt(struct rkisp_stream *stream,
 	u32 i, planes, imagsize = 0, xsubs = 1, ysubs = 1;
 
 	fmt = find_fmt(stream, pixm->pixelformat);
-	if (!fmt) {
-		v4l2_err(&dev->v4l2_dev,
-			 "%s nonsupport pixelformat:%c%c%c%c\n",
-			 node->vdev.name,
-			 pixm->pixelformat,
-			 pixm->pixelformat >> 8,
-			 pixm->pixelformat >> 16,
-			 pixm->pixelformat >> 24);
-		return -EINVAL;
-	}
+	if (!fmt)
+		fmt = &stream->config->fmts[0];
 
 	/* do checks on resolution */
 	restrict_rsz_resolution(stream, config, &max_rsz);
@@ -1139,7 +1131,8 @@ static int rkisp_set_wrap_line(struct rkisp_stream *stream, struct rkisp_wrap_in
 
 	if (dev->isp_ver != ISP_V32 ||
 	    dev->hw_dev->dev_link_num > 1 ||
-	    !stream->ops->set_wrap) {
+	    !stream->ops->set_wrap ||
+	    dev->hw_dev->unite) {
 		v4l2_err(&dev->v4l2_dev,
 			 "wrap only support for single sensor and mainpath\n");
 		return -EINVAL;
@@ -1464,7 +1457,7 @@ static struct v4l2_rect *rkisp_update_crop(struct rkisp_stream *stream,
 					    const struct v4l2_rect *in)
 {
 	struct rkisp_device *dev = stream->ispdev;
-	bool is_unite = dev->hw_dev->is_unite;
+	bool is_unite = !!dev->hw_dev->unite;
 	u32 align = is_unite ? 4 : 2;
 
 	/* Not crop for MP bayer raw data and dmatx path */
@@ -1539,7 +1532,7 @@ static int rkisp_querycap(struct file *file, void *priv,
 		 stream->ispdev->isp_ver >> 4);
 	snprintf(cap->bus_info, sizeof(cap->bus_info),
 		 "platform:%s", dev_name(dev));
-	cap->version = RKISP_DRIVER_VERSION;
+
 	return 0;
 }
 
@@ -1548,7 +1541,6 @@ static const struct v4l2_ioctl_ops rkisp_v4l2_ioctl_ops = {
 	.vidioc_querybuf = vb2_ioctl_querybuf,
 	.vidioc_create_bufs = vb2_ioctl_create_bufs,
 	.vidioc_qbuf = vb2_ioctl_qbuf,
-	.vidioc_expbuf = vb2_ioctl_expbuf,
 	.vidioc_dqbuf = vb2_ioctl_dqbuf,
 	.vidioc_prepare_buf = vb2_ioctl_prepare_buf,
 	.vidioc_streamon = vb2_ioctl_streamon,
@@ -1728,17 +1720,21 @@ int rkisp_register_stream_vdevs(struct rkisp_device *dev)
 		st_cfg->max_rsz_height = CIF_ISP_INPUT_H_MAX_V21;
 		ret = rkisp_register_stream_v21(dev);
 	} else if (dev->isp_ver == ISP_V30) {
-		st_cfg->max_rsz_width = dev->hw_dev->is_unite ?
+		st_cfg->max_rsz_width = dev->hw_dev->unite ?
 					CIF_ISP_INPUT_W_MAX_V30_UNITE : CIF_ISP_INPUT_W_MAX_V30;
-		st_cfg->max_rsz_height = dev->hw_dev->is_unite ?
+		st_cfg->max_rsz_height = dev->hw_dev->unite ?
 					 CIF_ISP_INPUT_H_MAX_V30_UNITE : CIF_ISP_INPUT_H_MAX_V30;
 		ret = rkisp_register_stream_v30(dev);
 	} else if (dev->isp_ver == ISP_V32) {
-		st_cfg->max_rsz_width = CIF_ISP_INPUT_W_MAX_V32;
-		st_cfg->max_rsz_height = CIF_ISP_INPUT_H_MAX_V32;
+		st_cfg->max_rsz_width = dev->hw_dev->unite ?
+					CIF_ISP_INPUT_W_MAX_V32_UNITE : CIF_ISP_INPUT_W_MAX_V32;
+		st_cfg->max_rsz_height = dev->hw_dev->unite ?
+					CIF_ISP_INPUT_H_MAX_V32_UNITE : CIF_ISP_INPUT_H_MAX_V32;
 		st_cfg = &rkisp_sp_stream_config;
-		st_cfg->max_rsz_width = CIF_ISP_INPUT_W_MAX_V32;
-		st_cfg->max_rsz_height = CIF_ISP_INPUT_H_MAX_V32;
+		st_cfg->max_rsz_width = dev->hw_dev->unite ?
+					CIF_ISP_INPUT_W_MAX_V32_UNITE : CIF_ISP_INPUT_W_MAX_V32;
+		st_cfg->max_rsz_height = dev->hw_dev->unite ?
+					 CIF_ISP_INPUT_H_MAX_V32_UNITE : CIF_ISP_INPUT_H_MAX_V32;
 		ret = rkisp_register_stream_v32(dev);
 	} else if (dev->isp_ver == ISP_V32_L) {
 		st_cfg->max_rsz_width = CIF_ISP_INPUT_W_MAX_V32_L;

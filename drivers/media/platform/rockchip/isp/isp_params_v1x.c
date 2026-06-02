@@ -2349,3 +2349,4 @@ void rkisp_uninit_params_vdev_v1x(struct rkisp_isp_params_vdev *params_vdev)
 {
 	kvfree(params_vdev->isp1x_params);
 }
+

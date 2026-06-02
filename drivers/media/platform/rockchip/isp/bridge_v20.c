@@ -1098,5 +1098,5 @@ void rkisp_bridge_init_ops_v20(struct rkisp_bridge_device *dev)
 		dev->ops = &mp_ops;
 		dev->cfg = &mp_cfg;
 	}
-	dev->frame_qst.function = rkisp_bridge_frame_done_early;
+	hrtimer_update_function(&dev->frame_qst, rkisp_bridge_frame_done_early);
 }

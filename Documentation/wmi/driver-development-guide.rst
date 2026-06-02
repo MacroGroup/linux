@@ -41,6 +41,10 @@ helps in understanding how the WMI device is supposed to work. The path of the A
 method associated with a given WMI device can be retrieved using the ``lswmi`` utility
 as mentioned above.
 
+If you are attempting to port a driver to Linux and are working on a Windows
+system, `WMIExplorer <https://github.com/vinaypamnani/wmie2>`_ can be useful
+for inspecting available WMI methods and invoking them directly.
+
 Basic WMI driver structure
 --------------------------
 
@@ -50,6 +54,7 @@ to matching WMI devices using a struct wmi_device_id table:
 ::
 
   static const struct wmi_device_id foo_id_table[] = {
+         /* Only use uppercase letters! */
          { "936DA01F-9ABD-4D9D-80C7-02AF85C822A8", NULL },
          { }
   };
@@ -91,6 +96,10 @@ on a given machine.
 
 Because of this, WMI drivers should use the state container design pattern as described in
 Documentation/driver-api/driver-model/design-patterns.rst.
+
+.. warning:: Using both GUID-based and non-GUID-based functions for querying WMI data blocks and
+             handling WMI events simultaneously on the same device is guaranteed to corrupt the
+             WMI device state and might lead to erratic behaviour.
 
 WMI method drivers
 ------------------

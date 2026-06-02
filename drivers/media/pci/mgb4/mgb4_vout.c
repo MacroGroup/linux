@@ -24,10 +24,6 @@
 #include "mgb4_cmt.h"
 #include "mgb4_vout.h"
 
-#define DEFAULT_WIDTH     1280
-#define DEFAULT_HEIGHT    640
-#define DEFAULT_PERIOD    (MGB4_HW_FREQ / 60)
-
 ATTRIBUTE_GROUPS(mgb4_fpdl3_out);
 ATTRIBUTE_GROUPS(mgb4_gmsl_out);
 
@@ -48,10 +44,10 @@ static const struct mgb4_i2c_kv fpdl3_i2c[] = {
 static const struct v4l2_dv_timings_cap video_timings_cap = {
 	.type = V4L2_DV_BT_656_1120,
 	.bt = {
-		.min_width = 320,
+		.min_width = 240,
 		.max_width = 4096,
 		.min_height = 240,
-		.max_height = 2160,
+		.max_height = 4096,
 		.min_pixelclock = 1843200, /* 320 x 240 x 24Hz */
 		.max_pixelclock = 530841600, /* 4096 x 2160 x 60Hz */
 		.standards = V4L2_DV_BT_STD_CEA861 | V4L2_DV_BT_STD_DMT |
@@ -180,7 +176,10 @@ static void stop_streaming(struct vb2_queue *vq)
 
 	xdma_disable_user_irq(mgbdev->xdev, irq);
 	cancel_work_sync(&voutdev->dma_work);
+
 	mgb4_mask_reg(&mgbdev->video, voutdev->config->regs.config, 0x2, 0x0);
+	mgb4_write_reg(&mgbdev->video, voutdev->config->regs.padding, 0);
+
 	return_all_buffers(voutdev, VB2_BUF_STATE_ERROR);
 }
 
@@ -196,6 +195,7 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
 	int rv;
 	u32 addr;
 
+	mgb4_write_reg(video, config->regs.padding, voutdev->padding);
 	mgb4_mask_reg(video, config->regs.config, 0x2, 0x2);
 
 	addr = mgb4_read_reg(video, config->regs.address);
@@ -359,7 +359,6 @@ static int vidioc_s_fmt(struct file *file, void *priv, struct v4l2_format *f)
 
 	voutdev->padding = (f->fmt.pix.bytesperline - (f->fmt.pix.width
 			    * pixelsize)) / pixelsize;
-	mgb4_write_reg(video, voutdev->config->regs.padding, voutdev->padding);
 
 	return 0;
 }
@@ -493,7 +492,14 @@ static int vidioc_s_dv_timings(struct file *file, void *fh,
 static int vidioc_enum_dv_timings(struct file *file, void *fh,
 				  struct v4l2_enum_dv_timings *timings)
 {
-	return v4l2_enum_dv_timings_cap(timings, &video_timings_cap, NULL, NULL);
+	struct mgb4_vout_dev *voutdev = video_drvdata(file);
+
+	if (timings->index != 0)
+		return -EINVAL;
+
+	get_timings(voutdev, &timings->timings);
+
+	return 0;
 }
 
 static int vidioc_dv_timings_cap(struct file *file, void *fh,
@@ -661,11 +667,10 @@ static void fpga_init(struct mgb4_vout_dev *voutdev)
 	const struct mgb4_vout_regs *regs = &voutdev->config->regs;
 
 	mgb4_write_reg(video, regs->config, 0x00000011);
-	mgb4_write_reg(video, regs->resolution,
-		       (DEFAULT_WIDTH << 16) | DEFAULT_HEIGHT);
+	mgb4_write_reg(video, regs->resolution, (1280 << 16) | 640);
 	mgb4_write_reg(video, regs->hsync, 0x00283232);
 	mgb4_write_reg(video, regs->vsync, 0x40141F1E);
-	mgb4_write_reg(video, regs->frame_limit, DEFAULT_PERIOD);
+	mgb4_write_reg(video, regs->frame_limit, MGB4_HW_FREQ / 60);
 	mgb4_write_reg(video, regs->padding, 0x00000000);
 
 	voutdev->freq = mgb4_cmt_set_vout_freq(voutdev, 61150 >> 1) << 1;

@@ -89,6 +89,7 @@ struct rkisp_hw_dev {
 	struct rkisp_monitor monitor;
 	u64 iq_feature;
 	int buf_init_cnt;
+	u32 unite;
 	bool is_feature_on;
 	bool is_dma_contig;
 	bool is_dma_sg_ops;
@@ -98,7 +99,6 @@ struct rkisp_hw_dev {
 	bool is_mi_update;
 	bool is_buf_init;
 	bool is_shutdown;
-	bool is_unite;
 	bool is_multi_overflow;
 	bool is_runing;
 	bool is_frm_buf;

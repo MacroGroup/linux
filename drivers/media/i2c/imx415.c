@@ -26,6 +26,10 @@
 #define IMX415_PIXEL_ARRAY_WIDTH  3864
 #define IMX415_PIXEL_ARRAY_HEIGHT 2192
 #define IMX415_PIXEL_ARRAY_VBLANK 58
+#define IMX415_EXPOSURE_OFFSET	  8
+
+#define IMX415_PIXEL_RATE_74_25MHZ	891000000
+#define IMX415_PIXEL_RATE_72MHZ		864000000
 
 #define IMX415_NUM_CLK_PARAM_REGS 11
 
@@ -51,7 +55,10 @@
 #define IMX415_OUTSEL		  CCI_REG8(0x30c0)
 #define IMX415_DRV		  CCI_REG8(0x30c1)
 #define IMX415_VMAX		  CCI_REG24_LE(0x3024)
+#define IMX415_VMAX_MAX		  0xfffff
 #define IMX415_HMAX		  CCI_REG16_LE(0x3028)
+#define IMX415_HMAX_MAX		  0xffff
+#define IMX415_HMAX_MULTIPLIER	  12
 #define IMX415_SHR0		  CCI_REG24_LE(0x3050)
 #define IMX415_GAIN_PCG_0	  CCI_REG16_LE(0x3090)
 #define IMX415_AGAIN_MIN	  0
@@ -70,6 +77,7 @@
 #define IMX415_INCKSEL5		  CCI_REG8(0x311e)
 #define IMX415_DIG_CLP_MODE	  CCI_REG8(0x32c8)
 #define IMX415_WRJ_OPEN		  CCI_REG8(0x3390)
+#define IMX415_ADBIT1		  CCI_REG8(0x3701)
 #define IMX415_SENSOR_INFO	  CCI_REG16_LE(0x3f12)
 #define IMX415_SENSOR_INFO_MASK	  0xfff
 #define IMX415_CHIP_ID		  0x514
@@ -101,8 +109,8 @@ static const char *const imx415_supply_names[] = {
  * and converts them to link frequencies by a factor of two when needed.
  */
 static const s64 link_freq_menu_items[] = {
-	594000000 / 2,	720000000 / 2,	891000000 / 2,
-	1440000000 / 2, 1485000000 / 2,
+	594000000 / 2,	720000000 / 2,	891000000 / 2,	1440000000 / 2,
+	1485000000 / 2,	1782000000 / 2,	2079000000 / 2,	2376000000 / 2,
 };
 
 struct imx415_clk_params {
@@ -445,11 +453,21 @@ static const struct imx415_clk_params imx415_clk_params[] = {
 	},
 };
 
-/* all-pixel 2-lane 720 Mbps 15.74 Hz mode */
-static const struct cci_reg_sequence imx415_mode_2_720[] = {
-	{ IMX415_VMAX, 0x08CA },
-	{ IMX415_HMAX, 0x07F0 },
-	{ IMX415_LANEMODE, IMX415_LANEMODE_2 },
+/* 594 Mbps CSI configuration */
+static const struct cci_reg_sequence imx415_linkrate_594mbps[] = {
+	{ IMX415_TCLKPOST, 0x0067 },
+	{ IMX415_TCLKPREPARE, 0x0027 },
+	{ IMX415_TCLKTRAIL, 0x0027 },
+	{ IMX415_TCLKZERO, 0x00B7 },
+	{ IMX415_THSPREPARE, 0x002F },
+	{ IMX415_THSZERO, 0x004F },
+	{ IMX415_THSTRAIL, 0x002F },
+	{ IMX415_THSEXIT, 0x0047 },
+	{ IMX415_TLPX, 0x0027 },
+};
+
+/* 720 Mbps CSI configuration */
+static const struct cci_reg_sequence imx415_linkrate_720mbps[] = {
 	{ IMX415_TCLKPOST, 0x006F },
 	{ IMX415_TCLKPREPARE, 0x002F },
 	{ IMX415_TCLKTRAIL, 0x002F },
@@ -461,27 +479,8 @@ static const struct cci_reg_sequence imx415_mode_2_720[] = {
 	{ IMX415_TLPX, 0x0027 },
 };
 
-/* all-pixel 2-lane 1440 Mbps 30.01 Hz mode */
-static const struct cci_reg_sequence imx415_mode_2_1440[] = {
-	{ IMX415_VMAX, 0x08CA },
-	{ IMX415_HMAX, 0x042A },
-	{ IMX415_LANEMODE, IMX415_LANEMODE_2 },
-	{ IMX415_TCLKPOST, 0x009F },
-	{ IMX415_TCLKPREPARE, 0x0057 },
-	{ IMX415_TCLKTRAIL, 0x0057 },
-	{ IMX415_TCLKZERO, 0x0187 },
-	{ IMX415_THSPREPARE, 0x005F },
-	{ IMX415_THSZERO, 0x00A7 },
-	{ IMX415_THSTRAIL, 0x005F },
-	{ IMX415_THSEXIT, 0x0097 },
-	{ IMX415_TLPX, 0x004F },
-};
-
-/* all-pixel 4-lane 891 Mbps 30 Hz mode */
-static const struct cci_reg_sequence imx415_mode_4_891[] = {
-	{ IMX415_VMAX, 0x08CA },
-	{ IMX415_HMAX, 0x044C },
-	{ IMX415_LANEMODE, IMX415_LANEMODE_4 },
+/* 891 Mbps CSI configuration */
+static const struct cci_reg_sequence imx415_linkrate_891mbps[] = {
 	{ IMX415_TCLKPOST, 0x007F },
 	{ IMX415_TCLKPREPARE, 0x0037 },
 	{ IMX415_TCLKTRAIL, 0x0037 },
@@ -493,77 +492,146 @@ static const struct cci_reg_sequence imx415_mode_4_891[] = {
 	{ IMX415_TLPX, 0x002F },
 };
 
+/* 1440 Mbps CSI configuration */
+static const struct cci_reg_sequence imx415_linkrate_1440mbps[] = {
+	{ IMX415_TCLKPOST, 0x009F },
+	{ IMX415_TCLKPREPARE, 0x0057 },
+	{ IMX415_TCLKTRAIL, 0x0057 },
+	{ IMX415_TCLKZERO, 0x0187 },
+	{ IMX415_THSPREPARE, 0x005F },
+	{ IMX415_THSZERO, 0x00A7 },
+	{ IMX415_THSTRAIL, 0x005F },
+	{ IMX415_THSEXIT, 0x0097 },
+	{ IMX415_TLPX, 0x004F },
+};
+
+/* 1485 Mbps CSI configuration */
+static const struct cci_reg_sequence imx415_linkrate_1485mbps[] = {
+	{ IMX415_TCLKPOST, 0x00A7 },
+	{ IMX415_TCLKPREPARE, 0x0057 },
+	{ IMX415_TCLKTRAIL, 0x005F },
+	{ IMX415_TCLKZERO, 0x0197 },
+	{ IMX415_THSPREPARE, 0x005F },
+	{ IMX415_THSZERO, 0x00AF },
+	{ IMX415_THSTRAIL, 0x005F },
+	{ IMX415_THSEXIT, 0x009F },
+	{ IMX415_TLPX, 0x004F },
+};
+
+/* 1782 Mbps CSI configuration */
+static const struct cci_reg_sequence imx415_linkrate_1782mbps[] = {
+	{ IMX415_TCLKPOST, 0x00B7 },
+	{ IMX415_TCLKPREPARE, 0x0067 },
+	{ IMX415_TCLKTRAIL, 0x006F },
+	{ IMX415_TCLKZERO, 0x01DF },
+	{ IMX415_THSPREPARE, 0x006F },
+	{ IMX415_THSZERO, 0x00CF },
+	{ IMX415_THSTRAIL, 0x006F },
+	{ IMX415_THSEXIT, 0x00B7 },
+	{ IMX415_TLPX, 0x005F },
+};
+
+/* 2079 Mbps CSI configuration */
+static const struct cci_reg_sequence imx415_linkrate_2079mbps[] = {
+	{ IMX415_TCLKPOST, 0x00D7 },
+	{ IMX415_TCLKPREPARE, 0x007F },
+	{ IMX415_TCLKTRAIL, 0x007F },
+	{ IMX415_TCLKZERO, 0x0237 },
+	{ IMX415_THSPREPARE, 0x0087 },
+	{ IMX415_THSZERO, 0x00EF },
+	{ IMX415_THSTRAIL, 0x0087 },
+	{ IMX415_THSEXIT, 0x00DF },
+	{ IMX415_TLPX, 0x006F },
+};
+
+/* 2376 Mbps CSI configuration */
+static const struct cci_reg_sequence imx415_linkrate_2376mbps[] = {
+	{ IMX415_TCLKPOST, 0x00E7 },
+	{ IMX415_TCLKPREPARE, 0x008F },
+	{ IMX415_TCLKTRAIL, 0x008F },
+	{ IMX415_TCLKZERO, 0x027F },
+	{ IMX415_THSPREPARE, 0x0097 },
+	{ IMX415_THSZERO, 0x010F },
+	{ IMX415_THSTRAIL, 0x0097 },
+	{ IMX415_THSEXIT, 0x00F7 },
+	{ IMX415_TLPX, 0x007F },
+};
+
 struct imx415_mode_reg_list {
 	u32 num_of_regs;
 	const struct cci_reg_sequence *regs;
 };
 
-/*
- * Mode : number of lanes, lane rate and frame rate dependent settings
- *
- * pixel_rate and hmax_pix are needed to calculate hblank for the v4l2 ctrl
- * interface. These values can not be found in the data sheet and should be
- * treated as virtual values. Use following table when adding new modes.
- *
- * lane_rate  lanes    fps     hmax_pix   pixel_rate
- *
- *     594      2     10.000     4400       99000000
- *     891      2     15.000     4400      148500000
- *     720      2     15.748     4064      144000000
- *    1782      2     30.000     4400      297000000
- *    2079      2     30.000     4400      297000000
- *    1440      2     30.019     4510      304615385
- *
- *     594      4     20.000     5500      247500000
- *     594      4     25.000     4400      247500000
- *     720      4     25.000     4400      247500000
- *     720      4     30.019     4510      304615385
- *     891      4     30.000     4400      297000000
- *    1440      4     30.019     4510      304615385
- *    1440      4     60.038     4510      609230769
- *    1485      4     60.000     4400      594000000
- *    1782      4     60.000     4400      594000000
- *    2079      4     60.000     4400      594000000
- *    2376      4     90.164     4392      891000000
- */
 struct imx415_mode {
 	u64 lane_rate;
-	u32 lanes;
-	u32 hmax_pix;
-	u64 pixel_rate;
+	u32 hmax_min[2];
 	struct imx415_mode_reg_list reg_list;
 };
 
 /* mode configs */
 static const struct imx415_mode supported_modes[] = {
 	{
-		.lane_rate = 720000000,
-		.lanes = 2,
-		.hmax_pix = 4064,
-		.pixel_rate = 144000000,
+		.lane_rate = 594000000,
+		.hmax_min = { 3300, 1320 },
 		.reg_list = {
-			.num_of_regs = ARRAY_SIZE(imx415_mode_2_720),
-			.regs = imx415_mode_2_720,
+			.num_of_regs = ARRAY_SIZE(imx415_linkrate_594mbps),
+			.regs = imx415_linkrate_594mbps,
 		},
 	},
 	{
-		.lane_rate = 1440000000,
-		.lanes = 2,
-		.hmax_pix = 4510,
-		.pixel_rate = 304615385,
+		.lane_rate = 720000000,
+		.hmax_min = { 2032, 1066 },
 		.reg_list = {
-			.num_of_regs = ARRAY_SIZE(imx415_mode_2_1440),
-			.regs = imx415_mode_2_1440,
+			.num_of_regs = ARRAY_SIZE(imx415_linkrate_720mbps),
+			.regs = imx415_linkrate_720mbps,
 		},
 	},
 	{
 		.lane_rate = 891000000,
-		.lanes = 4,
-		.hmax_pix = 4400,
-		.pixel_rate = 297000000,
+		.hmax_min = { 2200, 1100 },
 		.reg_list = {
-			.num_of_regs = ARRAY_SIZE(imx415_mode_4_891),
-			.regs = imx415_mode_4_891,
+			.num_of_regs = ARRAY_SIZE(imx415_linkrate_891mbps),
+			.regs = imx415_linkrate_891mbps,
+		},
+	},
+	{
+		.lane_rate = 1440000000,
+		.hmax_min = { 1066, 533 },
+		.reg_list = {
+			.num_of_regs = ARRAY_SIZE(imx415_linkrate_1440mbps),
+			.regs = imx415_linkrate_1440mbps,
+		},
+	},
+	{
+		.lane_rate = 1485000000,
+		.hmax_min = { 0, 550 },
+		.reg_list = {
+			.num_of_regs = ARRAY_SIZE(imx415_linkrate_1485mbps),
+			.regs = imx415_linkrate_1485mbps,
+		},
+	},
+	{
+		.lane_rate = 1782000000,
+		.hmax_min = { 1100, 550 },
+		.reg_list = {
+			.num_of_regs = ARRAY_SIZE(imx415_linkrate_1782mbps),
+			.regs = imx415_linkrate_1782mbps,
+		},
+	},
+	{
+		.lane_rate = 2079000000,
+		.hmax_min = { 1100, 550 },
+		.reg_list = {
+			.num_of_regs = ARRAY_SIZE(imx415_linkrate_2079mbps),
+			.regs = imx415_linkrate_2079mbps,
+		},
+	},
+	{
+		.lane_rate = 2376000000,
+		.hmax_min = { 0, 366 },
+		.reg_list = {
+			.num_of_regs = ARRAY_SIZE(imx415_linkrate_2376mbps),
+			.regs = imx415_linkrate_2376mbps,
 		},
 	},
 };
@@ -587,6 +655,7 @@ static const char *const imx415_test_pattern_menu[] = {
 struct imx415 {
 	struct device *dev;
 	struct clk *clk;
+	unsigned long pixel_rate;
 	struct regulator_bulk_data supplies[ARRAY_SIZE(imx415_supply_names)];
 	struct gpio_desc *reset;
 	struct regmap *regmap;
@@ -598,8 +667,10 @@ struct imx415 {
 
 	struct v4l2_ctrl_handler ctrls;
 	struct v4l2_ctrl *vblank;
+	struct v4l2_ctrl *hblank;
 	struct v4l2_ctrl *hflip;
 	struct v4l2_ctrl *vflip;
+	struct v4l2_ctrl *exposure;
 
 	unsigned int cur_mode;
 	unsigned int num_data_lanes;
@@ -616,6 +687,7 @@ static const struct cci_reg_sequence imx415_init_table[] = {
 	{ IMX415_REVERSE, 0x00 },
 	/* use RAW 10-bit mode */
 	{ IMX415_ADBIT, 0x00 },
+	{ IMX415_ADBIT1, 0x00 },
 	{ IMX415_MDBIT, 0x00 },
 	/* output VSYNC on XVS and low on XHS */
 	{ IMX415_OUTSEL, 0x22 },
@@ -730,17 +802,38 @@ static int imx415_s_ctrl(struct v4l2_ctrl *ctrl)
 					     ctrls);
 	const struct v4l2_mbus_framefmt *format;
 	struct v4l2_subdev_state *state;
+	u32 exposure_max;
 	unsigned int vmax;
 	unsigned int flip;
 	int ret;
 
-	if (!pm_runtime_get_if_in_use(sensor->dev))
-		return 0;
-
 	state = v4l2_subdev_get_locked_active_state(&sensor->subdev);
 	format = v4l2_subdev_state_get_format(state, 0);
 
+	if (ctrl->id == V4L2_CID_VBLANK) {
+		exposure_max = format->height + ctrl->val -
+			       IMX415_EXPOSURE_OFFSET;
+		__v4l2_ctrl_modify_range(sensor->exposure,
+					 sensor->exposure->minimum,
+					 exposure_max, sensor->exposure->step,
+					 sensor->exposure->default_value);
+	}
+
+	if (!pm_runtime_get_if_in_use(sensor->dev))
+		return 0;
+
 	switch (ctrl->id) {
+	case V4L2_CID_VBLANK:
+		ret = cci_write(sensor->regmap, IMX415_VMAX,
+				format->height + ctrl->val, NULL);
+		if (ret)
+			return ret;
+		/*
+		 * Exposure is set based on VMAX which has just changed, so
+		 * program exposure register as well
+		 */
+		ctrl = sensor->exposure;
+		fallthrough;
 	case V4L2_CID_EXPOSURE:
 		/* clamp the exposure value to VMAX. */
 		vmax = format->height + sensor->vblank->cur.val;
@@ -766,6 +859,13 @@ static int imx415_s_ctrl(struct v4l2_ctrl *ctrl)
 		ret = imx415_set_testpattern(sensor, ctrl->val);
 		break;
 
+	case V4L2_CID_HBLANK:
+		ret = cci_write(sensor->regmap, IMX415_HMAX,
+				(format->width + ctrl->val) /
+						IMX415_HMAX_MULTIPLIER,
+				NULL);
+		break;
+
 	default:
 		ret = -EINVAL;
 		break;
@@ -784,11 +884,12 @@ static int imx415_ctrls_init(struct imx415 *sensor)
 {
 	struct v4l2_fwnode_device_properties props;
 	struct v4l2_ctrl *ctrl;
-	u64 pixel_rate = supported_modes[sensor->cur_mode].pixel_rate;
-	u64 lane_rate = supported_modes[sensor->cur_mode].lane_rate;
+	const struct imx415_mode *cur_mode = &supported_modes[sensor->cur_mode];
+	u64 lane_rate = cur_mode->lane_rate;
 	u32 exposure_max = IMX415_PIXEL_ARRAY_HEIGHT +
-			   IMX415_PIXEL_ARRAY_VBLANK - 8;
-	u32 hblank;
+			   IMX415_PIXEL_ARRAY_VBLANK -
+			   IMX415_EXPOSURE_OFFSET;
+	u32 hblank_min, hblank_max;
 	unsigned int i;
 	int ret;
 
@@ -816,36 +917,33 @@ static int imx415_ctrls_init(struct imx415 *sensor)
 	if (ctrl)
 		ctrl->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
-	v4l2_ctrl_new_std(&sensor->ctrls, &imx415_ctrl_ops, V4L2_CID_EXPOSURE,
-			  4, exposure_max, 1, exposure_max);
+	sensor->exposure = v4l2_ctrl_new_std(&sensor->ctrls, &imx415_ctrl_ops,
+					     V4L2_CID_EXPOSURE, 4,
+					     exposure_max, 1, exposure_max);
 
 	v4l2_ctrl_new_std(&sensor->ctrls, &imx415_ctrl_ops,
 			  V4L2_CID_ANALOGUE_GAIN, IMX415_AGAIN_MIN,
 			  IMX415_AGAIN_MAX, IMX415_AGAIN_STEP,
 			  IMX415_AGAIN_MIN);
 
-	hblank = supported_modes[sensor->cur_mode].hmax_pix -
-		 IMX415_PIXEL_ARRAY_WIDTH;
+	hblank_min = (cur_mode->hmax_min[sensor->num_data_lanes == 2 ? 0 : 1] *
+		      IMX415_HMAX_MULTIPLIER) - IMX415_PIXEL_ARRAY_WIDTH;
+	hblank_max = (IMX415_HMAX_MAX * IMX415_HMAX_MULTIPLIER) -
+		     IMX415_PIXEL_ARRAY_WIDTH;
 	ctrl = v4l2_ctrl_new_std(&sensor->ctrls, &imx415_ctrl_ops,
-				 V4L2_CID_HBLANK, hblank, hblank, 1, hblank);
-	if (ctrl)
-		ctrl->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+				 V4L2_CID_HBLANK, hblank_min,
+				 hblank_max, IMX415_HMAX_MULTIPLIER,
+				 hblank_min);
 
 	sensor->vblank = v4l2_ctrl_new_std(&sensor->ctrls, &imx415_ctrl_ops,
 					   V4L2_CID_VBLANK,
 					   IMX415_PIXEL_ARRAY_VBLANK,
-					   IMX415_PIXEL_ARRAY_VBLANK, 1,
-					   IMX415_PIXEL_ARRAY_VBLANK);
-	if (sensor->vblank)
-		sensor->vblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+					   IMX415_VMAX_MAX - IMX415_PIXEL_ARRAY_HEIGHT,
+					   1, IMX415_PIXEL_ARRAY_VBLANK);
 
-	/*
-	 * The pixel rate used here is a virtual value and can be used for
-	 * calculating the frame rate together with hblank. It may not
-	 * necessarily be the physically correct pixel clock.
-	 */
-	v4l2_ctrl_new_std(&sensor->ctrls, NULL, V4L2_CID_PIXEL_RATE, pixel_rate,
-			  pixel_rate, 1, pixel_rate);
+	v4l2_ctrl_new_std(&sensor->ctrls, NULL, V4L2_CID_PIXEL_RATE,
+			  sensor->pixel_rate, sensor->pixel_rate, 1,
+			  sensor->pixel_rate);
 
 	sensor->hflip = v4l2_ctrl_new_std(&sensor->ctrls, &imx415_ctrl_ops,
 					  V4L2_CID_HFLIP, 0, 1, 1, 0);
@@ -890,7 +988,12 @@ static int imx415_set_mode(struct imx415 *sensor, int mode)
 			    IMX415_NUM_CLK_PARAM_REGS,
 			    &ret);
 
-	return 0;
+	ret = cci_write(sensor->regmap, IMX415_LANEMODE,
+			sensor->num_data_lanes == 2 ? IMX415_LANEMODE_2 :
+						      IMX415_LANEMODE_4,
+			NULL);
+
+	return ret;
 }
 
 static int imx415_setup(struct imx415 *sensor, struct v4l2_subdev_state *state)
@@ -956,7 +1059,6 @@ static int imx415_s_stream(struct v4l2_subdev *sd, int enable)
 	if (!enable) {
 		ret = imx415_stream_off(sensor);
 
-		pm_runtime_mark_last_busy(sensor->dev);
 		pm_runtime_put_autosuspend(sensor->dev);
 
 		goto unlock;
@@ -1080,6 +1182,18 @@ static int imx415_init_state(struct v4l2_subdev *sd,
 	return 0;
 }
 
+static int imx415_get_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
+				  struct v4l2_mbus_config *config)
+{
+	struct imx415 *sensor = to_imx415(sd);
+
+	config->type = V4L2_MBUS_CSI2_DPHY;
+	config->bus.mipi_csi2.flags = 0;
+	config->bus.mipi_csi2.num_data_lanes = sensor->num_data_lanes;
+
+	return 0;
+}
+
 static const struct v4l2_subdev_video_ops imx415_subdev_video_ops = {
 	.s_stream = imx415_s_stream,
 };
@@ -1090,6 +1204,7 @@ static const struct v4l2_subdev_pad_ops imx415_subdev_pad_ops = {
 	.get_fmt = v4l2_subdev_get_fmt,
 	.set_fmt = imx415_set_format,
 	.get_selection = imx415_get_selection,
+	.get_mbus_config = imx415_get_mbus_config,
 };
 
 static const struct v4l2_subdev_ops imx415_subdev_ops = {
@@ -1255,7 +1370,7 @@ static int imx415_parse_hw_config(struct imx415 *sensor)
 		return dev_err_probe(sensor->dev, PTR_ERR(sensor->reset),
 				     "failed to get reset GPIO\n");
 
-	sensor->clk = devm_clk_get(sensor->dev, "inck");
+	sensor->clk = devm_v4l2_sensor_clk_get(sensor->dev, NULL);
 	if (IS_ERR(sensor->clk))
 		return dev_err_probe(sensor->dev, PTR_ERR(sensor->clk),
 				     "failed to get clock\n");
@@ -1301,10 +1416,12 @@ static int imx415_parse_hw_config(struct imx415 *sensor)
 		}
 
 		for (j = 0; j < ARRAY_SIZE(supported_modes); ++j) {
-			if (sensor->num_data_lanes != supported_modes[j].lanes)
-				continue;
+			int lanes_idx = sensor->num_data_lanes == 2 ? 0 : 1;
+
 			if (bus_cfg.link_frequencies[i] * 2 !=
 			    supported_modes[j].lane_rate)
+				continue;
+			if (!supported_modes[j].hmax_min[lanes_idx])
 				continue;
 			sensor->cur_mode = j;
 			break;
@@ -1316,6 +1433,17 @@ static int imx415_parse_hw_config(struct imx415 *sensor)
 		ret = dev_err_probe(sensor->dev, -EINVAL,
 				    "no valid sensor mode defined\n");
 		goto done_endpoint_free;
+	}
+	switch (inck) {
+	case 27000000:
+	case 37125000:
+	case 74250000:
+		sensor->pixel_rate = IMX415_PIXEL_RATE_74_25MHZ;
+		break;
+	case 24000000:
+	case 72000000:
+		sensor->pixel_rate = IMX415_PIXEL_RATE_72MHZ;
+		break;
 	}
 
 	lane_rate = supported_modes[sensor->cur_mode].lane_rate;

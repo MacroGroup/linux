@@ -656,6 +656,11 @@ struct regulator_dev {
 	int cached_err;
 	bool use_cached_err;
 	spinlock_t err_lock;
+
+	int pw_requested_mW;
+
+	/* regulator notification forwarding */
+	struct notifier_block supply_fwd_nb;
 };
 
 /*

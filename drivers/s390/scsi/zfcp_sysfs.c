@@ -7,8 +7,7 @@
  * Copyright IBM Corp. 2008, 2020
  */
 
-#define KMSG_COMPONENT "zfcp"
-#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
+#define pr_fmt(fmt) "zfcp: " fmt
 
 #include <linux/slab.h>
 #include "zfcp_diag.h"
@@ -284,7 +283,7 @@ static bool zfcp_sysfs_port_in_use(struct zfcp_port *const port)
 		goto unlock_host_lock;
 	}
 
-	/* port is about to be removed, so no more unit_add or slave_alloc */
+	/* port is about to be removed, so no more unit_add or sdev_init */
 	zfcp_sysfs_port_set_removing(port);
 	in_use = false;
 
@@ -448,6 +447,8 @@ static ssize_t zfcp_sysfs_unit_add_store(struct device *dev,
 
 	if (kstrtoull(buf, 0, (unsigned long long *) &fcp_lun))
 		return -EINVAL;
+
+	flush_work(&port->rport_work);
 
 	retval = zfcp_unit_add(port, fcp_lun);
 	if (retval)

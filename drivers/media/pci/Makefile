@@ -22,7 +22,6 @@ obj-y        +=	ttpci/		\
 # Please keep it alphabetically sorted by Kconfig name
 # (e. g. LC_ALL=C sort Makefile)
 
-obj-$(CONFIG_STA2X11_VIP) += sta2x11/
 obj-$(CONFIG_CMM_DIASOM) += cmm/
 
 obj-$(CONFIG_VIDEO_BT848) += bt8xx/
