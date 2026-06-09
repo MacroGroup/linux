@@ -1,0 +1,7 @@
+config ROCKCHIP_RKNPU
+	tristate "Rockchip RKNPU driver"
+	depends on ARCH_ROCKCHIP || COMPILE_TEST
+	depends on DRM
+	depends on DMA_SHARED_BUFFER
+	help
+	  Rockchip RKNPU driver for RK3566/RK3568/RK3588 vendor RKNN runtime.
