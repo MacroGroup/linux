@@ -1013,11 +1013,7 @@ config DRM_PANEL_SITRONIX_ST7789V
 config DRM_PANEL_SITRONIX_ST7789V2
 	tristate "DRM support for Sitronix ST7789V2 panel"
 	depends on DRM && SPI
-	select DRM_CLIENT_SELECTION
-	select DRM_KMS_HELPER
-	select DRM_GEM_DMA_HELPER
-	select DRM_MIPI_DBI
-	select BACKLIGHT_CLASS_DEVICE
+	depends on BACKLIGHT_CLASS_DEVICE
 	help
 	  Say Y here if you want to enable support for the Sitronix
 	  ST7789V2 controller for 240x240 LCD panels
