@@ -613,6 +613,7 @@ unsigned long kunit_vm_mmap(struct kunit *test, struct file *file,
 			    unsigned long offset);
 
 void kunit_cleanup(struct kunit *test);
+void kunit_free_boot_suites(void);
 
 void __printf(2, 3) kunit_log_append(struct string_stream *log, const char *fmt, ...);
 
@@ -906,7 +907,8 @@ do {									       \
 	};								       \
 									       \
 	_KUNIT_SAVE_LOC(test);						       \
-	if (likely((__left) && (__right) && (strcmp(__left, __right) op 0)))   \
+	if (likely(!IS_ERR_OR_NULL(__left) && !IS_ERR_OR_NULL(__right) &&      \
+	    (strcmp(__left, __right) op 0)))				       \
 		break;							       \
 									       \
 									       \

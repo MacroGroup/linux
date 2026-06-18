@@ -68,6 +68,8 @@ beyond).
    stable-kernel-rules
    management-style
    researcher-guidelines
+   generated-content
+   coding-assistants
    conclave
 
 Dealing with bugs
@@ -84,6 +86,7 @@ regressions and security problems.
    debugging/index
    handling-regressions
    security-bugs
+   threat-model
    cve
    embargoed-hardware-issues
 
@@ -109,10 +112,3 @@ developers:
 
    kernel-docs
    deprecated
-
-.. only::  subproject and html
-
-   Indices
-   =======
-
-   * :ref:`genindex`

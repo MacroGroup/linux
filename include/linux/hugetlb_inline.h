@@ -6,23 +6,23 @@
 
 #ifdef CONFIG_HUGETLB_PAGE
 
-static inline bool is_vm_hugetlb_flags(vm_flags_t vm_flags)
+static inline bool is_vma_hugetlb_flags(const vma_flags_t *flags)
 {
-	return !!(vm_flags & VM_HUGETLB);
+	return vma_flags_test(flags, VMA_HUGETLB_BIT);
 }
 
 #else
 
-static inline bool is_vm_hugetlb_flags(vm_flags_t vm_flags)
+static inline bool is_vma_hugetlb_flags(const vma_flags_t *flags)
 {
 	return false;
 }
 
 #endif
 
-static inline bool is_vm_hugetlb_page(struct vm_area_struct *vma)
+static inline bool is_vm_hugetlb_page(const struct vm_area_struct *vma)
 {
-	return is_vm_hugetlb_flags(vma->vm_flags);
+	return is_vma_hugetlb_flags(&vma->flags);
 }
 
 #endif

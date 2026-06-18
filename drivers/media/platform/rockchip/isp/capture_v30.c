@@ -1519,8 +1519,6 @@ buffer_done:
 static struct vb2_ops rkisp_vb2_ops = {
 	.queue_setup = rkisp_queue_setup,
 	.buf_queue = rkisp_buf_queue,
-	.wait_prepare = vb2_ops_wait_prepare,
-	.wait_finish = vb2_ops_wait_finish,
 	.stop_streaming = rkisp_stop_streaming,
 	.start_streaming = rkisp_start_streaming,
 };

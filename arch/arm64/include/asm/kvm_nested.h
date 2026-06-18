@@ -23,6 +23,7 @@ static inline u64 tcr_el2_ps_to_tcr_el1_ips(u64 tcr_el2)
 static inline u64 translate_tcr_el2_to_tcr_el1(u64 tcr)
 {
 	return TCR_EPD1_MASK |				/* disable TTBR1_EL1 */
+	       ((tcr & TCR_EL2_DS) ? TCR_DS : 0) |
 	       ((tcr & TCR_EL2_TBI) ? TCR_TBI0 : 0) |
 	       tcr_el2_ps_to_tcr_el1_ips(tcr) |
 	       (tcr & TCR_EL2_TG0_MASK) |
@@ -131,7 +132,7 @@ static inline bool kvm_s2_trans_exec_el0(struct kvm *kvm, struct kvm_s2_trans *t
 	u8 xn = FIELD_GET(KVM_PTE_LEAF_ATTR_HI_S2_XN, trans->desc);
 
 	if (!kvm_has_xnx(kvm))
-		xn &= FIELD_PREP(KVM_PTE_LEAF_ATTR_HI_S2_XN, 0b10);
+		xn &= 0b10;
 
 	switch (xn) {
 	case 0b00:
@@ -147,7 +148,7 @@ static inline bool kvm_s2_trans_exec_el1(struct kvm *kvm, struct kvm_s2_trans *t
 	u8 xn = FIELD_GET(KVM_PTE_LEAF_ATTR_HI_S2_XN, trans->desc);
 
 	if (!kvm_has_xnx(kvm))
-		xn &= FIELD_PREP(KVM_PTE_LEAF_ATTR_HI_S2_XN, 0b10);
+		xn &= 0b10;
 
 	switch (xn) {
 	case 0b00:
@@ -396,6 +397,8 @@ int __kvm_find_s1_desc_level(struct kvm_vcpu *vcpu, u64 va, u64 ipa,
 int kvm_vcpu_allocate_vncr_tlb(struct kvm_vcpu *vcpu);
 int kvm_handle_vncr_abort(struct kvm_vcpu *vcpu);
 void kvm_handle_s1e2_tlbi(struct kvm_vcpu *vcpu, u32 inst, u64 val);
+
+u16 get_asid_by_regime(struct kvm_vcpu *vcpu, enum trans_regime regime);
 
 #define vncr_fixmap(c)						\
 	({							\

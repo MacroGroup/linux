@@ -441,12 +441,13 @@ struct l2tp_session *l2tp_session_get_by_ifname(const struct net *net,
 	idr_for_each_entry_ul(&pn->l2tp_tunnel_idr, tunnel, tmp, tunnel_id) {
 		if (tunnel) {
 			list_for_each_entry_rcu(session, &tunnel->session_list, list) {
-				if (!strcmp(session->ifname, ifname)) {
-					refcount_inc(&session->ref_count);
-					rcu_read_unlock_bh();
+				if (strcmp(session->ifname, ifname))
+					continue;
+				if (!refcount_inc_not_zero(&session->ref_count))
+					continue;
+				rcu_read_unlock_bh();
 
-					return session;
-				}
+				return session;
 			}
 		}
 	}
@@ -487,7 +488,7 @@ static int l2tp_session_collision_add(struct l2tp_net *pn,
 		/* First collision. Allocate list to manage the collided sessions
 		 * and add the existing session to the list.
 		 */
-		clist = kmalloc(sizeof(*clist), GFP_ATOMIC);
+		clist = kmalloc_obj(*clist, GFP_ATOMIC);
 		if (!clist)
 			return -ENOMEM;
 
@@ -1290,6 +1291,11 @@ static int l2tp_xmit_core(struct l2tp_session *session, struct sk_buff *skb, uns
 		uh->source = inet->inet_sport;
 		uh->dest = inet->inet_dport;
 		udp_len = uhlen + session->hdr_len + data_len;
+		if (udp_len > U16_MAX) {
+			kfree_skb(skb);
+			ret = NET_XMIT_DROP;
+			goto out_unlock;
+		}
 		uh->len = htons(udp_len);
 
 		/* Calculate UDP checksum if configured to do so */
@@ -1355,7 +1361,7 @@ static void l2tp_session_unhash(struct l2tp_session *session)
 		spin_lock_bh(&pn->l2tp_session_idr_lock);
 
 		/* Remove from the per-tunnel list */
-		list_del_init(&session->list);
+		list_del_rcu(&session->list);
 
 		/* Remove from per-net IDR */
 		if (tunnel->version == L2TP_HDR_VER_3) {
@@ -1572,7 +1578,7 @@ int l2tp_tunnel_create(int fd, int version, u32 tunnel_id, u32 peer_tunnel_id,
 	if (cfg)
 		encap = cfg->encap;
 
-	tunnel = kzalloc(sizeof(*tunnel), GFP_KERNEL);
+	tunnel = kzalloc_obj(*tunnel);
 	if (!tunnel) {
 		err = -ENOMEM;
 		goto err;

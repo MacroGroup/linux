@@ -296,8 +296,10 @@ static int csi2_dphy_s_power(struct v4l2_subdev *sd, int on)
 
 	if (on)
 		return pm_runtime_get_sync(dphy->dev);
-	else
-		return pm_runtime_put(dphy->dev);
+
+	pm_runtime_put(dphy->dev);
+
+	return 0;
 }
 
 static __maybe_unused int csi2_dphy_runtime_suspend(struct device *dev)
@@ -822,19 +824,7 @@ struct platform_driver rockchip_csi2_dphy_driver = {
 		.of_match_table = rockchip_csi2_dphy_match_id,
 	},
 };
-
-int rockchip_csi2_dphy_init(void)
-{
-	return platform_driver_register(&rockchip_csi2_dphy_driver);
-}
-
-#if defined(CONFIG_VIDEO_ROCKCHIP_THUNDER_BOOT_ISP) && !defined(CONFIG_INITCALL_ASYNC)
-subsys_initcall(rockchip_csi2_dphy_init);
-#else
-#if !defined(CONFIG_VIDEO_REVERSE_IMAGE)
 module_platform_driver(rockchip_csi2_dphy_driver);
-#endif
-#endif
 
 MODULE_AUTHOR("Rockchip Camera/ISP team");
 MODULE_DESCRIPTION("Rockchip MIPI CSI2 DPHY driver");

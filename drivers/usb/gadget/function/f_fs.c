@@ -150,6 +150,8 @@ struct ffs_dma_fence {
 	struct dma_fence base;
 	struct ffs_dmabuf_priv *priv;
 	struct work_struct work;
+	struct usb_ep *ep;
+	struct usb_request *req;
 };
 
 struct ffs_epfile {
@@ -619,7 +621,7 @@ static ssize_t ffs_ep0_read(struct file *file, char __user *buf,
 
 		/* unlocks spinlock */
 		ret = __ffs_ep0_queue_wait(ffs, data, len);
-		if ((ret > 0) && (copy_to_user(buf, data, len)))
+		if ((ret > 0) && (copy_to_user(buf, data, ret)))
 			ret = -EFAULT;
 		goto done_mutex;
 
@@ -814,7 +816,7 @@ static void *ffs_build_sg_list(struct sg_table *sgt, size_t sz)
 		return NULL;
 
 	n_pages = PAGE_ALIGN(sz) >> PAGE_SHIFT;
-	pages = kvmalloc_array(n_pages, sizeof(struct page *), GFP_KERNEL);
+	pages = kvmalloc_objs(struct page *, n_pages);
 	if (!pages) {
 		vfree(vaddr);
 
@@ -957,7 +959,7 @@ static ssize_t __ffs_epfile_read_data(struct ffs_epfile *epfile,
 		data_len, ret);
 
 	data_len -= ret;
-	buf = kmalloc(struct_size(buf, storage, data_len), GFP_KERNEL);
+	buf = kmalloc_flex(*buf, storage, data_len);
 	if (!buf)
 		return -ENOMEM;
 	buf->length = data_len;
@@ -1245,7 +1247,7 @@ static ssize_t ffs_epfile_write_iter(struct kiocb *kiocb, struct iov_iter *from)
 	ssize_t res;
 
 	if (!is_sync_kiocb(kiocb)) {
-		p = kzalloc(sizeof(io_data), GFP_KERNEL);
+		p = kzalloc_obj(io_data);
 		if (!p)
 			return -ENOMEM;
 		p->aio = true;
@@ -1280,7 +1282,7 @@ static ssize_t ffs_epfile_read_iter(struct kiocb *kiocb, struct iov_iter *to)
 	ssize_t res;
 
 	if (!is_sync_kiocb(kiocb)) {
-		p = kzalloc(sizeof(io_data), GFP_KERNEL);
+		p = kzalloc_obj(io_data);
 		if (!p)
 			return -ENOMEM;
 		p->aio = true;
@@ -1385,6 +1387,21 @@ static void ffs_dmabuf_cleanup(struct work_struct *work)
 	struct ffs_dmabuf_priv *priv = dma_fence->priv;
 	struct dma_buf_attachment *attach = priv->attach;
 	struct dma_fence *fence = &dma_fence->base;
+	struct usb_request *req = dma_fence->req;
+	struct usb_ep *ep = dma_fence->ep;
+
+	/*
+	 * eps_lock pairs with the cancel paths so they cannot pass a freed
+	 * req to usb_ep_dequeue().  Only clear if priv->req still names ours;
+	 * a re-queue on the same attachment may have taken that slot.
+	 */
+	spin_lock_irq(&priv->ffs->eps_lock);
+	if (priv->req == req)
+		priv->req = NULL;
+	spin_unlock_irq(&priv->ffs->eps_lock);
+
+	if (ep && req)
+		usb_ep_free_request(ep, req);
 
 	ffs_dmabuf_put(attach);
 	dma_fence_put(fence);
@@ -1414,8 +1431,8 @@ static void ffs_epfile_dmabuf_io_complete(struct usb_ep *ep,
 					  struct usb_request *req)
 {
 	pr_vdebug("FFS: DMABUF transfer complete, status=%d\n", req->status);
+	/* req is freed by ffs_dmabuf_cleanup() under eps_lock. */
 	ffs_dmabuf_signal_done(req->context, req->status);
-	usb_ep_free_request(ep, req);
 }
 
 static const char *ffs_dmabuf_get_driver_name(struct dma_fence *fence)
@@ -1503,13 +1520,13 @@ static int ffs_dmabuf_attach(struct file *file, int fd)
 		goto err_dmabuf_put;
 	}
 
-	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
+	priv = kzalloc_obj(*priv);
 	if (!priv) {
 		err = -ENOMEM;
 		goto err_dmabuf_detach;
 	}
 
-	dir = epfile->in ? DMA_FROM_DEVICE : DMA_TO_DEVICE;
+	dir = epfile->in ? DMA_TO_DEVICE : DMA_FROM_DEVICE;
 
 	err = ffs_dma_resv_lock(dmabuf, nonblock);
 	if (err)
@@ -1639,7 +1656,7 @@ static int ffs_dmabuf_transfer(struct file *file,
 	/* Make sure we don't have writers */
 	timeout = nonblock ? 0 : msecs_to_jiffies(DMABUF_ENQUEUE_TIMEOUT_MS);
 	retl = dma_resv_wait_timeout(dmabuf->resv,
-				     dma_resv_usage_rw(epfile->in),
+				     dma_resv_usage_rw(!epfile->in),
 				     true, timeout);
 	if (retl == 0)
 		retl = -EBUSY;
@@ -1652,7 +1669,7 @@ static int ffs_dmabuf_transfer(struct file *file,
 	if (ret)
 		goto err_resv_unlock;
 
-	fence = kmalloc(sizeof(*fence), GFP_KERNEL);
+	fence = kmalloc_obj(*fence);
 	if (!fence) {
 		ret = -ENOMEM;
 		goto err_resv_unlock;
@@ -1684,7 +1701,7 @@ static int ffs_dmabuf_transfer(struct file *file,
 	dma_fence_init(&fence->base, &ffs_dmabuf_fence_ops,
 		       &priv->lock, priv->context, seqno);
 
-	resv_dir = epfile->in ? DMA_RESV_USAGE_WRITE : DMA_RESV_USAGE_READ;
+	resv_dir = epfile->in ? DMA_RESV_USAGE_READ : DMA_RESV_USAGE_WRITE;
 
 	dma_resv_add_fence(dmabuf->resv, &fence->base, resv_dir);
 	dma_resv_unlock(dmabuf->resv);
@@ -1699,6 +1716,10 @@ static int ffs_dmabuf_transfer(struct file *file,
 	usb_req->context  = fence;
 	usb_req->complete = ffs_epfile_dmabuf_io_complete;
 
+	/* ffs_dmabuf_cleanup() frees usb_req via these two fields. */
+	fence->req = usb_req;
+	fence->ep = ep->ep;
+
 	cookie = dma_fence_begin_signalling();
 	ret = usb_ep_queue(ep->ep, usb_req, GFP_ATOMIC);
 	dma_fence_end_signalling(cookie);
@@ -1708,7 +1729,6 @@ static int ffs_dmabuf_transfer(struct file *file,
 	} else {
 		pr_warn("FFS: Failed to queue DMABUF: %d\n", ret);
 		ffs_dmabuf_signal_done(fence, ret);
-		usb_ep_free_request(ep->ep, usb_req);
 	}
 
 	spin_unlock_irq(&epfile->ffs->eps_lock);
@@ -1744,10 +1764,8 @@ static long ffs_epfile_ioctl(struct file *file, unsigned code,
 	{
 		int fd;
 
-		if (copy_from_user(&fd, (void __user *)value, sizeof(fd))) {
-			ret = -EFAULT;
-			break;
-		}
+		if (copy_from_user(&fd, (void __user *)value, sizeof(fd)))
+			return -EFAULT;
 
 		return ffs_dmabuf_attach(file, fd);
 	}
@@ -1755,10 +1773,8 @@ static long ffs_epfile_ioctl(struct file *file, unsigned code,
 	{
 		int fd;
 
-		if (copy_from_user(&fd, (void __user *)value, sizeof(fd))) {
-			ret = -EFAULT;
-			break;
-		}
+		if (copy_from_user(&fd, (void __user *)value, sizeof(fd)))
+			return -EFAULT;
 
 		return ffs_dmabuf_detach(file, fd);
 	}
@@ -1766,10 +1782,8 @@ static long ffs_epfile_ioctl(struct file *file, unsigned code,
 	{
 		struct usb_ffs_dmabuf_transfer_req req;
 
-		if (copy_from_user(&req, (void __user *)value, sizeof(req))) {
-			ret = -EFAULT;
-			break;
-		}
+		if (copy_from_user(&req, (void __user *)value, sizeof(req)))
+			return -EFAULT;
 
 		return ffs_dmabuf_transfer(file, &req);
 	}
@@ -2073,7 +2087,7 @@ static int ffs_fs_init_fs_context(struct fs_context *fc)
 {
 	struct ffs_sb_fill_data *ctx;
 
-	ctx = kzalloc(sizeof(struct ffs_sb_fill_data), GFP_KERNEL);
+	ctx = kzalloc_obj(struct ffs_sb_fill_data);
 	if (!ctx)
 		return -ENOMEM;
 
@@ -2189,7 +2203,7 @@ static void ffs_data_closed(struct ffs_data *ffs)
 
 static struct ffs_data *ffs_data_new(const char *dev_name)
 {
-	struct ffs_data *ffs = kzalloc(sizeof *ffs, GFP_KERNEL);
+	struct ffs_data *ffs = kzalloc_obj(*ffs);
 	if (!ffs)
 		return NULL;
 
@@ -2336,7 +2350,7 @@ static int ffs_epfiles_create(struct ffs_data *ffs)
 	int err;
 
 	count = ffs->eps_count;
-	epfiles = kcalloc(count, sizeof(*epfiles), GFP_KERNEL);
+	epfiles = kzalloc_objs(*epfiles, count);
 	if (!epfiles)
 		return -ENOMEM;
 
@@ -4000,7 +4014,7 @@ static void ffs_attr_release(struct config_item *item)
 	usb_put_function_instance(&opts->func_inst);
 }
 
-static struct configfs_item_operations ffs_item_ops = {
+static const struct configfs_item_operations ffs_item_ops = {
 	.release	= ffs_attr_release,
 };
 
@@ -4037,7 +4051,7 @@ static struct usb_function_instance *ffs_alloc_inst(void)
 	struct f_fs_opts *opts;
 	struct ffs_dev *dev;
 
-	opts = kzalloc(sizeof(*opts), GFP_KERNEL);
+	opts = kzalloc_obj(*opts);
 	if (!opts)
 		return ERR_PTR(-ENOMEM);
 
@@ -4113,7 +4127,7 @@ static struct usb_function *ffs_alloc(struct usb_function_instance *fi)
 {
 	struct ffs_function *func;
 
-	func = kzalloc(sizeof(*func), GFP_KERNEL);
+	func = kzalloc_obj(*func);
 	if (!func)
 		return ERR_PTR(-ENOMEM);
 
@@ -4144,7 +4158,7 @@ static struct ffs_dev *_ffs_alloc_dev(void)
 	if (_ffs_get_single_dev())
 			return ERR_PTR(-EBUSY);
 
-	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
+	dev = kzalloc_obj(*dev);
 	if (!dev)
 		return ERR_PTR(-ENOMEM);
 

@@ -85,7 +85,7 @@ static struct vgic_irq *vgic_add_lpi(struct kvm *kvm, u32 intid,
 	if (irq)
 		return irq;
 
-	irq = kzalloc(sizeof(struct vgic_irq), GFP_KERNEL_ACCOUNT);
+	irq = kzalloc_obj(struct vgic_irq, GFP_KERNEL_ACCOUNT);
 	if (!irq)
 		return ERR_PTR(-ENOMEM);
 
@@ -597,8 +597,10 @@ static void vgic_its_invalidate_cache(struct vgic_its *its)
 	unsigned long idx;
 
 	xa_for_each(&its->translation_cache, idx, irq) {
-		xa_erase(&its->translation_cache, idx);
-		vgic_put_irq(kvm, irq);
+		/* Only the context that erases the entry drops its cache ref. */
+		irq = xa_erase(&its->translation_cache, idx);
+		if (irq)
+			vgic_put_irq(kvm, irq);
 	}
 }
 
@@ -960,7 +962,7 @@ static int vgic_its_alloc_collection(struct vgic_its *its,
 {
 	struct its_collection *collection;
 
-	collection = kzalloc(sizeof(*collection), GFP_KERNEL_ACCOUNT);
+	collection = kzalloc_obj(*collection, GFP_KERNEL_ACCOUNT);
 	if (!collection)
 		return -ENOMEM;
 
@@ -1004,7 +1006,7 @@ static struct its_ite *vgic_its_alloc_ite(struct its_device *device,
 {
 	struct its_ite *ite;
 
-	ite = kzalloc(sizeof(*ite), GFP_KERNEL_ACCOUNT);
+	ite = kzalloc_obj(*ite, GFP_KERNEL_ACCOUNT);
 	if (!ite)
 		return ERR_PTR(-ENOMEM);
 
@@ -1131,7 +1133,7 @@ static struct its_device *vgic_its_alloc_device(struct vgic_its *its,
 {
 	struct its_device *device;
 
-	device = kzalloc(sizeof(*device), GFP_KERNEL_ACCOUNT);
+	device = kzalloc_obj(*device, GFP_KERNEL_ACCOUNT);
 	if (!device)
 		return ERR_PTR(-ENOMEM);
 
@@ -1846,7 +1848,7 @@ static int vgic_its_create(struct kvm_device *dev, u32 type)
 	if (type != KVM_DEV_TYPE_ARM_VGIC_ITS)
 		return -ENODEV;
 
-	its = kzalloc(sizeof(struct vgic_its), GFP_KERNEL_ACCOUNT);
+	its = kzalloc_obj(struct vgic_its, GFP_KERNEL_ACCOUNT);
 	if (!its)
 		return -ENOMEM;
 
@@ -2306,6 +2308,10 @@ static int vgic_its_restore_dte(struct vgic_its *its, u32 id,
 
 	/* dte entry is valid */
 	offset = (entry & KVM_ITS_DTE_NEXT_MASK) >> KVM_ITS_DTE_NEXT_SHIFT;
+
+	/* Mimic the MAPD behaviour and reject invalid EID bits. */
+	if (num_eventid_bits > VITS_TYPER_IDBITS)
+		return -EINVAL;
 
 	if (!vgic_its_check_id(its, baser, id, NULL))
 		return -EINVAL;

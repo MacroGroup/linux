@@ -117,6 +117,7 @@ bool hci_discovery_active(struct hci_dev *hdev)
 		return false;
 	}
 }
+EXPORT_SYMBOL(hci_discovery_active);
 
 void hci_discovery_set_state(struct hci_dev *hdev, int state)
 {
@@ -261,7 +262,7 @@ u32 hci_inquiry_cache_update(struct hci_dev *hdev, struct inquiry_data *data,
 	}
 
 	/* Entry not in the cache. Add new one. */
-	ie = kzalloc(sizeof(*ie), GFP_KERNEL);
+	ie = kzalloc_obj(*ie);
 	if (!ie) {
 		flags |= MGMT_DEV_FOUND_CONFIRM_NAME;
 		goto done;
@@ -538,46 +539,9 @@ static int hci_dev_do_reset(struct hci_dev *hdev)
 
 	hci_req_sync_lock(hdev);
 
-	/* Drop queues */
-	skb_queue_purge(&hdev->rx_q);
-	skb_queue_purge(&hdev->cmd_q);
-
-	/* Cancel these to avoid queueing non-chained pending work */
-	hci_dev_set_flag(hdev, HCI_CMD_DRAIN_WORKQUEUE);
-	/* Wait for
-	 *
-	 *    if (!hci_dev_test_flag(hdev, HCI_CMD_DRAIN_WORKQUEUE))
-	 *        queue_delayed_work(&hdev->{cmd,ncmd}_timer)
-	 *
-	 * inside RCU section to see the flag or complete scheduling.
-	 */
-	synchronize_rcu();
-	/* Explicitly cancel works in case scheduled after setting the flag. */
-	cancel_delayed_work(&hdev->cmd_timer);
-	cancel_delayed_work(&hdev->ncmd_timer);
-
-	/* Avoid potential lockdep warnings from the *_flush() calls by
-	 * ensuring the workqueue is empty up front.
-	 */
-	drain_workqueue(hdev->workqueue);
-
-	hci_dev_lock(hdev);
-	hci_inquiry_cache_flush(hdev);
-	hci_conn_hash_flush(hdev);
-	hci_dev_unlock(hdev);
-
-	if (hdev->flush)
-		hdev->flush(hdev);
-
-	hci_dev_clear_flag(hdev, HCI_CMD_DRAIN_WORKQUEUE);
-
-	atomic_set(&hdev->cmd_cnt, 1);
-	hdev->acl_cnt = 0;
-	hdev->sco_cnt = 0;
-	hdev->le_cnt = 0;
-	hdev->iso_cnt = 0;
-
-	ret = hci_reset_sync(hdev);
+	ret = hci_dev_close_sync(hdev);
+	if (!ret)
+		ret = hci_dev_open_sync(hdev);
 
 	hci_req_sync_unlock(hdev);
 	return ret;
@@ -796,7 +760,7 @@ int hci_get_dev_list(void __user *arg)
 	if (!dev_num || dev_num > (PAGE_SIZE * 2) / sizeof(*dr))
 		return -EINVAL;
 
-	dl = kzalloc(struct_size(dl, dev_req, dev_num), GFP_KERNEL);
+	dl = kzalloc_flex(*dl, dev_req, dev_num);
 	if (!dl)
 		return -ENOMEM;
 
@@ -1285,7 +1249,7 @@ struct link_key *hci_add_link_key(struct hci_dev *hdev, struct hci_conn *conn,
 		key = old_key;
 	} else {
 		old_key_type = conn ? conn->key_type : 0xff;
-		key = kzalloc(sizeof(*key), GFP_KERNEL);
+		key = kzalloc_obj(*key);
 		if (!key)
 			return NULL;
 		list_add_rcu(&key->list, &hdev->link_keys);
@@ -1330,7 +1294,7 @@ struct smp_ltk *hci_add_ltk(struct hci_dev *hdev, bdaddr_t *bdaddr,
 	if (old_key)
 		key = old_key;
 	else {
-		key = kzalloc(sizeof(*key), GFP_KERNEL);
+		key = kzalloc_obj(*key);
 		if (!key)
 			return NULL;
 		list_add_rcu(&key->list, &hdev->long_term_keys);
@@ -1355,7 +1319,7 @@ struct smp_irk *hci_add_irk(struct hci_dev *hdev, bdaddr_t *bdaddr,
 
 	irk = hci_find_irk_by_addr(hdev, bdaddr, addr_type);
 	if (!irk) {
-		irk = kzalloc(sizeof(*irk), GFP_KERNEL);
+		irk = kzalloc_obj(*irk);
 		if (!irk)
 			return NULL;
 
@@ -1549,7 +1513,7 @@ int hci_add_remote_oob_data(struct hci_dev *hdev, bdaddr_t *bdaddr,
 
 	data = hci_find_remote_oob_data(hdev, bdaddr, bdaddr_type);
 	if (!data) {
-		data = kmalloc(sizeof(*data), GFP_KERNEL);
+		data = kmalloc_obj(*data);
 		if (!data)
 			return -ENOMEM;
 
@@ -1717,7 +1681,7 @@ struct adv_info *hci_add_adv_instance(struct hci_dev *hdev, u8 instance,
 		    instance < 1 || instance > hdev->le_num_of_adv_sets + 1)
 			return ERR_PTR(-EOVERFLOW);
 
-		adv = kzalloc(sizeof(*adv), GFP_KERNEL);
+		adv = kzalloc_obj(*adv);
 		if (!adv)
 			return ERR_PTR(-ENOMEM);
 
@@ -2106,7 +2070,7 @@ int hci_bdaddr_list_add(struct list_head *list, bdaddr_t *bdaddr, u8 type)
 	if (hci_bdaddr_list_lookup(list, bdaddr, type))
 		return -EEXIST;
 
-	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+	entry = kzalloc_obj(*entry);
 	if (!entry)
 		return -ENOMEM;
 
@@ -2129,7 +2093,7 @@ int hci_bdaddr_list_add_with_irk(struct list_head *list, bdaddr_t *bdaddr,
 	if (hci_bdaddr_list_lookup(list, bdaddr, type))
 		return -EEXIST;
 
-	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+	entry = kzalloc_obj(*entry);
 	if (!entry)
 		return -ENOMEM;
 
@@ -2158,7 +2122,7 @@ int hci_bdaddr_list_add_with_flags(struct list_head *list, bdaddr_t *bdaddr,
 	if (hci_bdaddr_list_lookup(list, bdaddr, type))
 		return -EEXIST;
 
-	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+	entry = kzalloc_obj(*entry);
 	if (!entry)
 		return -ENOMEM;
 
@@ -2275,7 +2239,7 @@ struct hci_conn_params *hci_conn_params_add(struct hci_dev *hdev,
 	if (params)
 		return params;
 
-	params = kzalloc(sizeof(*params), GFP_KERNEL);
+	params = kzalloc_obj(*params);
 	if (!params) {
 		bt_dev_err(hdev, "out of memory");
 		return NULL;
@@ -3916,8 +3880,8 @@ static void hci_isodata_packet(struct hci_dev *hdev, struct sk_buff *skb)
 
 	err = iso_recv(hdev, handle, skb, flags);
 	if (err == -ENOENT)
-		bt_dev_err(hdev, "ISO packet for unknown connection handle %d",
-			   handle);
+		bt_dev_err_ratelimited(hdev, "ISO packet for unknown connection handle %d",
+				       handle);
 	else if (err)
 		bt_dev_dbg(hdev, "ISO packet recv for handle %d failed: %d",
 			   handle, err);
@@ -4125,7 +4089,7 @@ static int hci_send_cmd_sync(struct hci_dev *hdev, struct sk_buff *skb)
 		kfree_skb(skb);
 	}
 
-	if (hdev->req_status == HCI_REQ_PEND &&
+	if (READ_ONCE(hdev->req_status) == HCI_REQ_PEND &&
 	    !hci_dev_test_and_set_flag(hdev, HCI_CMD_PENDING)) {
 		kfree_skb(hdev->req_skb);
 		hdev->req_skb = skb_clone(hdev->sent_cmd, GFP_KERNEL);

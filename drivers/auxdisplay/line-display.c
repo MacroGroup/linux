@@ -56,7 +56,7 @@ static int create_attachment(struct device *dev, struct linedisp *linedisp, bool
 {
 	struct linedisp_attachment *attachment;
 
-	attachment = kzalloc(sizeof(*attachment), GFP_KERNEL);
+	attachment = kzalloc_obj(*attachment);
 	if (!attachment)
 		return -ENOMEM;
 
@@ -173,7 +173,7 @@ static int linedisp_display(struct linedisp *linedisp, const char *msg,
 		count = strlen(msg);
 
 	/* if the string ends with a newline, trim it */
-	if (msg[count - 1] == '\n')
+	if (count && msg[count - 1] == '\n')
 		count--;
 
 	if (!count) {
@@ -365,7 +365,7 @@ static DEFINE_IDA(linedisp_id);
 
 static void linedisp_release(struct device *dev)
 {
-	struct linedisp *linedisp = to_linedisp(dev);
+	struct linedisp *linedisp = container_of(dev, struct linedisp, dev);
 
 	kfree(linedisp->map);
 	kfree(linedisp->message);
@@ -390,7 +390,7 @@ static int linedisp_init_map(struct linedisp *linedisp)
 	if (err < 0)
 		return err;
 
-	map = kmalloc(sizeof(*map), GFP_KERNEL);
+	map = kmalloc_obj(*map);
 	if (!map)
 		return -ENOMEM;
 
