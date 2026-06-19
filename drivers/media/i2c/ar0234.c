@@ -944,7 +944,7 @@ static int ar0234_ctrls_init(struct ar0234 *ar0234)
 static int ar0234_parse_hw_config(struct ar0234 *ar0234)
 {
 	struct v4l2_fwnode_endpoint *ep_cfg = &ar0234->ep_cfg;
-	struct fwnode_handle *ep;
+	struct fwnode_handle *ep __free(fwnode_handle) = NULL;
 	unsigned int i;
 	int ret;
 
@@ -976,7 +976,6 @@ static int ar0234_parse_hw_config(struct ar0234 *ar0234)
 	ep_cfg->bus_type = V4L2_MBUS_CSI2_DPHY;
 
 	ret = v4l2_fwnode_endpoint_alloc_parse(ep, ep_cfg);
-	fwnode_handle_put(ep);
 	if (ret)
 		return ret;
 
