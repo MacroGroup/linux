@@ -118,9 +118,6 @@ static int diasom_prepare(struct drm_panel *panel)
        gpiod_set_value(diasom->reset, 0);
        msleep(30);
 
-       gpiod_set_value(diasom->reset, 1);
-       msleep(30);
-
        return 0;
 }
 
@@ -130,6 +127,8 @@ static int diasom_unprepare(struct drm_panel *panel)
 
        gpiod_set_value(diasom->reset, 1);
        msleep(120);
+
+       gpiod_set_value(diasom->enable, 0);
 
        regulator_disable(diasom->vdd);
        regulator_disable(diasom->vccio);
@@ -460,14 +459,14 @@ static int diasom_dsi_probe(struct mipi_dsi_device *dsi)
 
        diasom->reset = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
        if (IS_ERR(diasom->reset)) {
-               DRM_DEV_ERROR(&dsi->dev, "failed to get our reset GPIO\n");
+               DRM_DEV_ERROR(&dsi->dev, "failed to get reset GPIO\n");
                return PTR_ERR(diasom->reset);
        }
 
-       diasom->reset = devm_gpiod_get(dev, "enable", GPIOD_OUT_LOW);
-       if (IS_ERR(diasom->reset)) {
-               DRM_DEV_ERROR(&dsi->dev, "failed to get our enable GPIO\n");
-               return PTR_ERR(diasom->reset);
+       diasom->enable = devm_gpiod_get(dev, "enable", GPIOD_OUT_LOW);
+       if (IS_ERR(diasom->enable)) {
+               DRM_DEV_ERROR(&dsi->dev, "failed to get enable GPIO\n");
+               return PTR_ERR(diasom->enable);
        }
 
        diasom->vdd = devm_regulator_get(dev, "vdd");
