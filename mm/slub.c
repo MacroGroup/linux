@@ -8524,7 +8524,7 @@ void __init kmem_cache_init(void)
 	setup_kmalloc_cache_index_table();
 	create_kmalloc_caches();
 
-	bootstrap_kmalloc_sheaves();
+//	bootstrap_kmalloc_sheaves();
 
 	/* Setup random freelists for each cache */
 	init_freelist_randomization();
