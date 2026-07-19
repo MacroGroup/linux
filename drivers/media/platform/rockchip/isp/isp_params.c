@@ -251,12 +251,9 @@ rkisp_params_vb2_start_streaming(struct vb2_queue *queue, unsigned int count)
 
 static struct vb2_ops rkisp_params_vb2_ops = {
 	.queue_setup = rkisp_params_vb2_queue_setup,
-	.wait_prepare = vb2_ops_wait_prepare,
-	.wait_finish = vb2_ops_wait_finish,
 	.buf_queue = rkisp_params_vb2_buf_queue,
 	.start_streaming = rkisp_params_vb2_start_streaming,
 	.stop_streaming = rkisp_params_vb2_stop_streaming,
-
 };
 
 static int rkisp_params_fh_open(struct file *filp)

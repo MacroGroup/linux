@@ -30,6 +30,7 @@
 #include <linux/hid.h>
 #include <linux/input.h>
 #include <linux/leds.h>
+#include <linux/unaligned.h>
 #include <linux/workqueue.h>
 
 #include "hid-ids.h"
@@ -793,8 +794,8 @@ static int lenovo_raw_event(struct hid_device *hdev,
 	 */
 	if (unlikely((hdev->product == USB_DEVICE_ID_LENOVO_X12_TAB
 			|| hdev->product == USB_DEVICE_ID_LENOVO_X12_TAB2)
-			&& size >= 3 && report->id == 0x03))
-		return lenovo_raw_event_TP_X12_tab(hdev, le32_to_cpu(*(__le32 *)data));
+			&& size >= 4 && report->id == 0x03))
+		return lenovo_raw_event_TP_X12_tab(hdev, get_unaligned_le32(data));
 
 	return 0;
 }
@@ -1422,7 +1423,6 @@ err:
 	return ret;
 }
 
-#ifdef CONFIG_PM
 static int lenovo_reset_resume(struct hid_device *hdev)
 {
 	switch (hdev->product) {
@@ -1438,7 +1438,6 @@ static int lenovo_reset_resume(struct hid_device *hdev)
 
 	return 0;
 }
-#endif
 
 static void lenovo_remove_tpkbd(struct hid_device *hdev)
 {
@@ -1570,9 +1569,7 @@ static struct hid_driver lenovo_driver = {
 	.raw_event = lenovo_raw_event,
 	.event = lenovo_event,
 	.report_fixup = lenovo_report_fixup,
-#ifdef CONFIG_PM
-	.reset_resume = lenovo_reset_resume,
-#endif
+	.reset_resume = pm_ptr(lenovo_reset_resume),
 };
 module_hid_driver(lenovo_driver);
 

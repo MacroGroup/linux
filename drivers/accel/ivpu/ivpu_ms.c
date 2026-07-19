@@ -59,7 +59,7 @@ int ivpu_ms_start_ioctl(struct drm_device *dev, void *data, struct drm_file *fil
 		goto unlock;
 	}
 
-	ms = kzalloc(sizeof(*ms), GFP_KERNEL);
+	ms = kzalloc_obj(*ms);
 	if (!ms) {
 		ret = -ENOMEM;
 		goto unlock;
@@ -290,6 +290,13 @@ int ivpu_ms_get_info_ioctl(struct drm_device *dev, void *data, struct drm_file *
 					    ivpu_bo_size(bo), NULL, &info_size);
 	if (ret)
 		goto unlock;
+
+	if (info_size > ivpu_bo_size(bo)) {
+		ivpu_warn_ratelimited(vdev, "MS info overflow: %#llx > %#zx\n",
+				      info_size, ivpu_bo_size(bo));
+		ret = -EOVERFLOW;
+		goto unlock;
+	}
 
 	if (args->buffer_size < info_size) {
 		ret = -ENOSPC;

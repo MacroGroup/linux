@@ -711,8 +711,6 @@ free_buf_queue:
 static struct vb2_ops dmarx_vb2_ops = {
 	.queue_setup = rkisp_queue_setup,
 	.buf_queue = rkisp_buf_queue,
-	.wait_prepare = vb2_ops_wait_prepare,
-	.wait_finish = vb2_ops_wait_finish,
 	.stop_streaming = dmarx_stop_streaming,
 	.start_streaming = dmarx_start_streaming,
 };

@@ -715,6 +715,7 @@ struct xfrm_mgr {
 					   const struct xfrm_migrate *m,
 					   int num_bundles,
 					   const struct xfrm_kmaddress *k,
+					   struct net *net,
 					   const struct xfrm_encap_tmpl *encap);
 	bool			(*is_alive)(const struct km_event *c);
 };
@@ -1156,19 +1157,19 @@ struct xfrm_offload {
 #define CRYPTO_INVALID_PROTOCOL			128
 
 	/* Used to keep whole l2 header for transport mode GRO */
-	__u32			orig_mac_len;
+	__u16			orig_mac_len;
 
 	__u8			proto;
 	__u8			inner_ipproto;
 };
 
 struct sec_path {
-	int			len;
-	int			olen;
-	int			verified_cnt;
-
 	struct xfrm_state	*xvec[XFRM_MAX_DEPTH];
 	struct xfrm_offload	ovec[XFRM_MAX_OFFLOAD_DEPTH];
+
+	u8			len;
+	u8			olen;
+	u8			verified_cnt;
 };
 
 struct sec_path *secpath_set(struct sk_buff *skb);
@@ -1891,7 +1892,7 @@ int xfrm_sk_policy_insert(struct sock *sk, int dir, struct xfrm_policy *pol);
 #ifdef CONFIG_XFRM_MIGRATE
 int km_migrate(const struct xfrm_selector *sel, u8 dir, u8 type,
 	       const struct xfrm_migrate *m, int num_bundles,
-	       const struct xfrm_kmaddress *k,
+	       const struct xfrm_kmaddress *k, struct net *net,
 	       const struct xfrm_encap_tmpl *encap);
 struct xfrm_state *xfrm_migrate_state_find(struct xfrm_migrate *m, struct net *net,
 						u32 if_id);

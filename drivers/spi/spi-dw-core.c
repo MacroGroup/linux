@@ -472,7 +472,9 @@ static inline void dw_spi_abort(struct spi_controller *ctlr)
 	if (dws->dma_mapped)
 		dws->dma_ops->dma_stop(dws);
 
+	disable_irq(dws->irq);
 	dw_spi_reset_chip(dws);
+	enable_irq(dws->irq);
 }
 
 static void dw_spi_handle_err(struct spi_controller *ctlr,
@@ -797,7 +799,7 @@ static int dw_spi_setup(struct spi_device *spi)
 		struct dw_spi *dws = spi_controller_get_devdata(spi->controller);
 		u32 rx_sample_dly_ns;
 
-		chip = kzalloc(sizeof(*chip), GFP_KERNEL);
+		chip = kzalloc_obj(*chip);
 		if (!chip)
 			return -ENOMEM;
 		spi_set_ctldata(spi, chip);
@@ -935,8 +937,6 @@ int dw_spi_add_controller(struct device *dev, struct dw_spi *dws)
 
 	if (!ctlr)
 		return -ENOMEM;
-
-	device_set_node(&ctlr->dev, dev_fwnode(dev));
 
 	dws->ctlr = ctlr;
 	dws->dma_addr = (dma_addr_t)(dws->paddr + DW_SPI_DR);

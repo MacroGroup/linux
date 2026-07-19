@@ -2,6 +2,7 @@
 /* Copyright 2025 Arm, Ltd. */
 
 #include <linux/err.h>
+#include <linux/overflow.h>
 #include <linux/slab.h>
 
 #include <drm/ethosu_accel.h>
@@ -50,7 +51,7 @@ struct drm_gem_object *ethosu_gem_create_object(struct drm_device *ddev, size_t 
 {
 	struct ethosu_gem_object *obj;
 
-	obj = kzalloc(sizeof(*obj), GFP_KERNEL);
+	obj = kzalloc_obj(*obj);
 	if (!obj)
 		return ERR_PTR(-ENOMEM);
 
@@ -154,7 +155,7 @@ static void cmd_state_init(struct cmd_state *st)
 
 static u64 cmd_to_addr(u32 *cmd)
 {
-	return ((u64)((cmd[0] & 0xff0000) << 16)) | cmd[1];
+	return (((u64)cmd[0] & 0xff0000) << 16) | cmd[1];
 }
 
 static u64 dma_length(struct ethosu_validated_cmdstream_info *info,
@@ -163,17 +164,30 @@ static u64 dma_length(struct ethosu_validated_cmdstream_info *info,
 	s8 mode = dma_st->mode;
 	u64 len = dma->len;
 
+	if (len == U64_MAX)
+		return U64_MAX;
+
 	if (mode >= 1) {
+		if (dma->stride[0] < 0 && (u64)(-dma->stride[0]) > len)
+			return U64_MAX;
 		len += dma->stride[0];
-		len *= dma_st->size0;
+		if (check_mul_overflow(len, (u64)dma_st->size0, &len))
+			return U64_MAX;
 	}
 	if (mode == 2) {
+		if (dma->stride[1] < 0 && (u64)(-dma->stride[1]) > len)
+			return U64_MAX;
 		len += dma->stride[1];
-		len *= dma_st->size1;
+		if (check_mul_overflow(len, (u64)dma_st->size1, &len))
+			return U64_MAX;
 	}
-	if (dma->region >= 0)
-		info->region_size[dma->region] = max(info->region_size[dma->region],
-						     len + dma->offset);
+	if (dma->region >= 0) {
+		u64 end;
+
+		if (check_add_overflow(len, dma->offset, &end))
+			return U64_MAX;
+		info->region_size[dma->region] = max(info->region_size[dma->region], end);
+	}
 
 	return len;
 }
@@ -245,10 +259,13 @@ static int calc_sizes(struct drm_device *ddev,
 			((st->ifm.stride_kernel >> 1) & 0x1) + 1;
 		u32 stride_x = ((st->ifm.stride_kernel >> 5) & 0x2) +
 			(st->ifm.stride_kernel & 0x1) + 1;
-		u32 ifm_height = st->ofm.height[2] * stride_y +
+		s32 ifm_height = st->ofm.height[2] * stride_y +
 			st->ifm.height[2] - (st->ifm.pad_top + st->ifm.pad_bottom);
-		u32 ifm_width  = st->ofm.width * stride_x +
+		s32 ifm_width = st->ofm.width * stride_x +
 			st->ifm.width - (st->ifm.pad_left + st->ifm.pad_right);
+
+		if (ifm_height < 0 || ifm_width < 0)
+			return -EINVAL;
 
 		len = feat_matrix_length(info, &st->ifm, ifm_width,
 					 ifm_height, st->ifm.depth);
@@ -352,7 +369,7 @@ static int ethosu_gem_cmdstream_copy_and_validate(struct drm_device *ddev,
 						  struct ethosu_gem_object *bo,
 						  u32 size)
 {
-	struct ethosu_validated_cmdstream_info __free(kfree) *info = kzalloc(sizeof(*info), GFP_KERNEL);
+	struct ethosu_validated_cmdstream_info __free(kfree) *info = kzalloc_obj(*info);
 	struct ethosu_device *edev = to_ethosu_device(ddev);
 	u32 *bocmds = bo->base.vaddr;
 	struct cmd_state st;
@@ -384,6 +401,8 @@ static int ethosu_gem_cmdstream_copy_and_validate(struct drm_device *ddev,
 				return -EFAULT;
 
 			i++;
+			if (i >= size / 4)
+				return -EINVAL;
 			bocmds[i] = cmds[1];
 			addr = cmd_to_addr(cmds);
 		}
@@ -392,6 +411,8 @@ static int ethosu_gem_cmdstream_copy_and_validate(struct drm_device *ddev,
 		case NPU_OP_DMA_START:
 			srclen = dma_length(info, &st.dma, &st.dma.src);
 			dstlen = dma_length(info, &st.dma, &st.dma.dst);
+			if (srclen == U64_MAX || dstlen == U64_MAX)
+				return -EINVAL;
 
 			if (st.dma.dst.region >= 0)
 				info->output_region[st.dma.dst.region] = true;
@@ -417,7 +438,10 @@ static int ethosu_gem_cmdstream_copy_and_validate(struct drm_device *ddev,
 				return ret;
 			break;
 		case NPU_OP_ELEMENTWISE:
-			use_ifm2 = !((st.ifm2.broadcast == 8) || (param == 5) ||
+			use_scale = ethosu_is_u65(edev) ?
+				    (st.ifm2.broadcast & 0x80) :
+				    (st.ifm2.broadcast == 8);
+			use_ifm2 = !(use_scale || (param == 5) ||
 				(param == 6) || (param == 7) || (param == 0x24));
 			use_ifm = st.ifm.broadcast != 8;
 			ret = calc_sizes_elemwise(ddev, info, cmd, &st, use_ifm, use_ifm2);
@@ -425,8 +449,7 @@ static int ethosu_gem_cmdstream_copy_and_validate(struct drm_device *ddev,
 				return ret;
 			break;
 		case NPU_OP_RESIZE: // U85 only
-			WARN_ON(1); // TODO
-			break;
+			return -EINVAL;
 		case NPU_SET_KERNEL_WIDTH_M1:
 			st.ifm.width = param;
 			break;
@@ -458,7 +481,7 @@ static int ethosu_gem_cmdstream_copy_and_validate(struct drm_device *ddev,
 			st.ifm.broadcast = param;
 			break;
 		case NPU_SET_IFM_REGION:
-			st.ifm.region = param & 0x7f;
+			st.ifm.region = param & 0x7;
 			break;
 		case NPU_SET_IFM_WIDTH0_M1:
 			st.ifm.width0 = param;
@@ -593,7 +616,7 @@ static int ethosu_gem_cmdstream_copy_and_validate(struct drm_device *ddev,
 			if (ethosu_is_u65(edev))
 				st.scale[1].length = cmds[1];
 			else
-				st.weight[1].length = cmds[1];
+				st.weight[2].length = cmds[1];
 			break;
 		case NPU_SET_WEIGHT3_BASE:
 			st.weight[3].base = addr;

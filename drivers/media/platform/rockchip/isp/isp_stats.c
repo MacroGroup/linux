@@ -233,8 +233,6 @@ rkisp_stats_vb2_start_streaming(struct vb2_queue *queue,
 static struct vb2_ops rkisp_stats_vb2_ops = {
 	.queue_setup = rkisp_stats_vb2_queue_setup,
 	.buf_queue = rkisp_stats_vb2_buf_queue,
-	.wait_prepare = vb2_ops_wait_prepare,
-	.wait_finish = vb2_ops_wait_finish,
 	.stop_streaming = rkisp_stats_vb2_stop_streaming,
 	.start_streaming = rkisp_stats_vb2_start_streaming,
 };
