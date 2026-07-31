@@ -290,9 +290,8 @@ static int ar0234_calculate_pll(struct ar0234 *ar0234,
 		    CCS_PLL_FLAG_EVEN_PLL_MULTIPLIER |
 		    CCS_PLL_FLAG_FIFO_DERATING |
 		    CCS_PLL_FLAG_FIFO_OVERRATING |
-		    CCS_PLL_FLAG_EXT_IP_PLL_DIVIDER |
-		    CCS_PLL_FLAG_OP_SYS_DDR;
-	pll.link_freq = ar0234->link_freqs[mode->link_freq_index];
+		    CCS_PLL_FLAG_EXT_IP_PLL_DIVIDER;
+	pll.link_freq = ar0234->link_freqs[mode->link_freq_index] / 2;
 	pll.ext_clk_freq_hz = clk_get_rate(ar0234->clk);
 
 	ret = ccs_pll_calculate(ar0234->sd.dev, &ar0234_pll_limits, &pll);
@@ -512,9 +511,12 @@ static int ar0234_enum_frame_size(struct v4l2_subdev *sd,
 static void ar0234_set_link_limits(struct ar0234 *ar0234,
 				   const struct ar0234_mode *mode)
 {
-	__v4l2_ctrl_s_ctrl_int64(ar0234->pixel_rate,
-				 ar0234->pll.pixel_rate_pixel_array *
-				 ar0234->ep_cfg.bus.mipi_csi2.num_data_lanes);
+	u64 pixel_rate = ar0234->link_freqs[mode->link_freq_index] * 2;
+
+	pixel_rate *= ar0234->ep_cfg.bus.mipi_csi2.num_data_lanes;
+	do_div(pixel_rate, mode->bpp_out);
+
+	__v4l2_ctrl_s_ctrl_int64(ar0234->pixel_rate, pixel_rate);
 
 	__v4l2_ctrl_s_ctrl(ar0234->link_freq, mode->link_freq_index);
 }
