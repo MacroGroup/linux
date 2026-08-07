@@ -636,7 +636,7 @@ static int ar0234_set_selection(struct v4l2_subdev *sd,
 	rect.width = round_down(sel->r.width, AR0234_CROP_WIDTH_STEP);
 	rect.height = round_down(sel->r.height, AR0234_CROP_HEIGHT_STEP);
 
-	/* Сlamp the width and height to the maximum possible values */
+	/* Clamp the width and height to the maximum possible values */
 	rect.width = min(rect.width, AR0234_PIXEL_ARRAY_WIDTH);
 	rect.height = min(rect.height, AR0234_PIXEL_ARRAY_HEIGHT);
 
