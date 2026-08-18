@@ -447,9 +447,12 @@ static int diasom_dsi_probe(struct mipi_dsi_device *dsi)
        struct diasom *diasom;
        int ret;
 
-       diasom = devm_kzalloc(&dsi->dev, sizeof(*diasom), GFP_KERNEL);
-       if (!diasom)
-               return -ENOMEM;
+	diasom = devm_drm_panel_alloc(dev, __typeof(*diasom), panel,
+				      &diasom_funcs,
+				      DRM_MODE_CONNECTOR_DSI);
+
+	if (IS_ERR(diasom))
+		return PTR_ERR(diasom);
 
        desc = of_device_get_match_data(dev);
        dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST |
@@ -480,9 +483,6 @@ static int diasom_dsi_probe(struct mipi_dsi_device *dsi)
                DRM_DEV_ERROR(&dsi->dev, "failed to get vccio regulator\n");
                return PTR_ERR(diasom->vccio);
        }
-
-       drm_panel_init(&diasom->panel, dev, &diasom_funcs,
-                      DRM_MODE_CONNECTOR_DSI);
 
        ret = drm_panel_of_backlight(&diasom->panel);
        if (ret)
