@@ -532,8 +532,6 @@ static void ar0234_set_framing_limits(struct ar0234 *ar0234, u32 width)
 	int hblank =
 		max(AR0234_LINE_LENGTH_PCK_MIN * 4 - width, AR0234_HBLANK_MIN);
 
-	__v4l2_ctrl_s_ctrl(ar0234->vblank, AR0234_VBLANK_MIN);
-
 	ar0234_update_exposure_limits(ar0234);
 
 	__v4l2_ctrl_modify_range(ar0234->hblank, AR0234_HBLANK_MIN,
@@ -568,17 +566,11 @@ static int ar0234_set_pad_format(struct v4l2_subdev *sd,
 	format.xfer_func = V4L2_XFER_FUNC_NONE;
 
 	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE) {
-		int ret = ar0234_calculate_pll(ar0234, mode);
-
-		if (ret) {
-			dev_err(sd->dev, "PLL recalculation failed: %d\n", ret);
+		if (ar0234_calculate_pll(ar0234, mode))
 			return -EINVAL;
-		}
 
-		mutex_lock(ar0234->ctrls.lock);
 		ar0234_set_link_limits(ar0234, mode);
 		ar0234_set_framing_limits(ar0234, crop->width);
-		mutex_unlock(ar0234->ctrls.lock);
 	}
 
 	*v4l2_subdev_state_get_format(state, fmt->pad) = format;
@@ -622,6 +614,7 @@ static int ar0234_set_selection(struct v4l2_subdev *sd,
 	struct ar0234 *ar0234 = to_ar0234(sd);
 	struct v4l2_rect *crop;
 	struct v4l2_rect rect;
+	u32 max_left, max_top;
 
 	if (sel->which == V4L2_SUBDEV_FORMAT_ACTIVE &&
 	    v4l2_subdev_is_streaming(sd))
@@ -630,37 +623,40 @@ static int ar0234_set_selection(struct v4l2_subdev *sd,
 	if (sel->target != V4L2_SEL_TGT_CROP)
 		return -EINVAL;
 
-	/* Align the requested rectangle to the sensor's cropping granularity */
+	/* Align to sensor's cropping granularity */
 	rect.left = round_up(sel->r.left, AR0234_CROP_WIDTH_STEP);
 	rect.top = round_up(sel->r.top, AR0234_CROP_HEIGHT_STEP);
 	rect.width = round_down(sel->r.width, AR0234_CROP_WIDTH_STEP);
 	rect.height = round_down(sel->r.height, AR0234_CROP_HEIGHT_STEP);
 
-	/* Clamp the width and height to the maximum possible values */
+	/* First, clamp width/height to the array maximum */
 	rect.width = min(rect.width, AR0234_PIXEL_ARRAY_WIDTH);
 	rect.height = min(rect.height, AR0234_PIXEL_ARRAY_HEIGHT);
 
-	/* Clamp the top-left corner so that the whole rectangle stays */
-	/* inside the active pixel array */
-	rect.left =
-		clamp_t(u32, rect.left, AR0234_PIXEL_ARRAY_LEFT,
-			AR0234_PIXEL_ARRAY_LEFT + AR0234_PIXEL_ARRAY_WIDTH -
-			rect.width);
-	rect.top =
-		clamp_t(u32, rect.top, AR0234_PIXEL_ARRAY_TOP,
-			AR0234_PIXEL_ARRAY_TOP + AR0234_PIXEL_ARRAY_HEIGHT -
-			rect.height);
+	/*
+	 * Adjust left/top so that the rectangle always stays inside the
+	 * active pixel array and leaves at least the minimum crop size.
+	 * Compute the maximum allowed left/top that still leaves room for
+	 * the (possibly already reduced) width/height, but no less than
+	 * the minimum crop size.
+	 */
+	max_left = AR0234_PIXEL_ARRAY_LEFT + AR0234_PIXEL_ARRAY_WIDTH -
+		   max(rect.width, AR0234_MIN_CROP_WIDTH);
+	max_top = AR0234_PIXEL_ARRAY_TOP + AR0234_PIXEL_ARRAY_HEIGHT -
+		  max(rect.height, AR0234_MIN_CROP_HEIGHT);
 
-	/* Clamp width and height to the allowed minima and to the */
-	/* remaining space after fixing the top-left corner */
-	rect.width =
-		clamp_t(u32, rect.width, AR0234_MIN_CROP_WIDTH,
-			AR0234_PIXEL_ARRAY_LEFT + AR0234_PIXEL_ARRAY_WIDTH -
-			rect.left);
-	rect.height =
-		clamp_t(u32, rect.height, AR0234_MIN_CROP_HEIGHT,
-			AR0234_PIXEL_ARRAY_TOP + AR0234_PIXEL_ARRAY_HEIGHT -
-			rect.top);
+	rect.left = clamp_t(u32, rect.left, AR0234_PIXEL_ARRAY_LEFT, max_left);
+	rect.top = clamp_t(u32, rect.top, AR0234_PIXEL_ARRAY_TOP, max_top);
+
+	/*
+	 * Now recalculate width/height as the remaining space. This value
+	 * is guaranteed to be >= AR0234_MIN_CROP_WIDTH/HEIGHT because we
+	 * clamped left/top using the max() of the current size and the min.
+	 */
+	rect.width = min(rect.width, AR0234_PIXEL_ARRAY_LEFT +
+			 AR0234_PIXEL_ARRAY_WIDTH - rect.left);
+	rect.height = min(rect.height, AR0234_PIXEL_ARRAY_TOP +
+			  AR0234_PIXEL_ARRAY_HEIGHT - rect.top);
 
 	crop = v4l2_subdev_state_get_crop(state, sel->pad);
 
@@ -825,6 +821,9 @@ static int ar0234_get_frame_desc(struct v4l2_subdev *sd, unsigned int pad,
 
 	state = v4l2_subdev_lock_and_get_active_state(&ar0234->sd);
 	fmt = v4l2_subdev_state_get_format(state, pad);
+	if (!fmt)
+		return -EINVAL;
+
 	code = fmt->code;
 	v4l2_subdev_unlock_state(state);
 
@@ -971,7 +970,7 @@ static int ar0234_parse_hw_config(struct ar0234 *ar0234)
 {
 	struct v4l2_fwnode_endpoint *ep_cfg = &ar0234->ep_cfg;
 	struct fwnode_handle *ep;
-	unsigned int i;
+	unsigned int i, j;
 	int ret;
 
 	for (i = 0; i < ARRAY_SIZE(ar0234->supplies); i++)
@@ -1017,24 +1016,31 @@ static int ar0234_parse_hw_config(struct ar0234 *ar0234)
 		goto done_endpoint_free;
 	}
 
-	if (ep_cfg->nr_of_link_frequencies != AR0234_LINK_FREQ_IDX_MAX) {
-		ret = dev_err_probe(ar0234->sd.dev, -EINVAL,
-				    "Invalid number of link frequencies %u\n",
-				    ep_cfg->nr_of_link_frequencies);
-		goto done_endpoint_free;
-	}
+	for (i = 0; i < AR0234_LINK_FREQ_IDX_MAX; i++) {
+		for (j = 0; j < ep_cfg->nr_of_link_frequencies; j++) {
+			s64 freq = ep_cfg->link_frequencies[j];
 
-	for (i = 0; i < ep_cfg->nr_of_link_frequencies; i++) {
-		s64 freq = ep_cfg->link_frequencies[i];
+			if (freq < 360000000LL || freq > 450000000LL) {
+				dev_warn_probe(ar0234->sd.dev, -EINVAL,
+					       "Link freq %lli out of bounds\n",
+					       freq);
+				continue;
+			}
 
-		if (freq < 360000000LL || freq > 450000000LL) {
-			ret = dev_err_probe(ar0234->sd.dev, -EINVAL,
-					    "Invalid link frequency %lli\n",
-					    freq);
-			goto done_endpoint_free;
+			ar0234->link_freqs[i] = freq;
+
+			if (!ar0234_calculate_pll(ar0234, &ar0234_modes[i]))
+				break;
+
+			ar0234->link_freqs[i] = 0;
 		}
 
-		ar0234->link_freqs[i] = freq;
+		if (ar0234->link_freqs[i])
+			continue;
+
+		ret = dev_err_probe(ar0234->sd.dev, -EINVAL,
+				    "No valid freq found for mode idx %u\n", i);
+		goto done_endpoint_free;
 	}
 
 	return 0;
@@ -1122,9 +1128,9 @@ static int ar0234_power_off(struct device *dev)
 
 	gpiod_set_value_cansleep(ar0234->reset, 1);
 
-	regulator_bulk_disable(ARRAY_SIZE(ar0234->supplies), ar0234->supplies);
-
 	clk_disable_unprepare(ar0234->clk);
+
+	regulator_bulk_disable(ARRAY_SIZE(ar0234->supplies), ar0234->supplies);
 
 	/* 100ms PwrDown until next PwrUp */
 	fsleep(100000);
@@ -1135,6 +1141,7 @@ static int ar0234_power_off(struct device *dev)
 static void ar0234_subdev_cleanup(struct ar0234 *ar0234)
 {
 	v4l2_subdev_cleanup(&ar0234->sd);
+	media_entity_cleanup(&ar0234->sd.entity);
 	v4l2_ctrl_handler_free(&ar0234->ctrls);
 }
 
@@ -1188,12 +1195,6 @@ static int ar0234_probe(struct i2c_client *client)
 	if (ret)
 		goto error_pm;
 
-	ret = ar0234_calculate_pll(ar0234, &ar0234_modes[0]);
-	if (ret) {
-		dev_err_probe(dev, ret, "PLL calculations failed\n");
-		goto error_pm;
-	}
-
 	ar0234->sd.internal_ops = &ar0234_internal_ops;
 	ar0234->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 	ar0234->sd.entity.ops = &ar0234_subdev_entity_ops;
@@ -1208,11 +1209,11 @@ static int ar0234_probe(struct i2c_client *client)
 
 	ret = v4l2_subdev_init_finalize(&ar0234->sd);
 	if (ret)
-		goto error_pm;
+		goto err_media;
 
 	ret = ar0234_ctrls_init(ar0234);
 	if (ret)
-		goto error_pm;
+		goto err_media;
 
 	ar0234->sd.state_lock = ar0234->ctrls.lock;
 
@@ -1220,12 +1221,15 @@ static int ar0234_probe(struct i2c_client *client)
 	if (ret) {
 		dev_err_probe(dev, ret,
 			      "Failed to register sensor sub-device\n");
-		goto error_pm;
+		goto err_media;
 	}
 
 	pm_runtime_put_autosuspend(dev);
 
 	return 0;
+
+err_media:
+	media_entity_cleanup(&ar0234->sd.entity);
 
 error_pm:
 	pm_runtime_disable(dev);
