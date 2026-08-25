@@ -344,7 +344,7 @@ static void ar0234_update_exposure_limits(struct ar0234 *ar0234)
 	struct v4l2_rect *crop;
 	int exposure_max, exposure_val;
 
-	state = v4l2_subdev_get_locked_active_state(&ar0234->sd);
+	state = v4l2_subdev_get_unlocked_active_state(&ar0234->sd);
 	crop = v4l2_subdev_state_get_crop(state, 0);
 
 	exposure_max = crop->height + ar0234->vblank->val - 1;
@@ -383,11 +383,11 @@ static int ar0234_set_ctrl(struct v4l2_ctrl *ctrl)
 	if (ctrl->flags & V4L2_CTRL_FLAG_READ_ONLY)
 		return 0;
 
-	state = v4l2_subdev_get_locked_active_state(sd);
-	crop = v4l2_subdev_state_get_crop(state, 0);
-
 	if (ctrl->id == V4L2_CID_VBLANK)
 		ar0234_update_exposure_limits(ar0234);
+
+	state = v4l2_subdev_get_locked_active_state(sd);
+	crop = v4l2_subdev_state_get_crop(state, 0);
 
 	if (v4l2_subdev_is_streaming(sd)) {
 		switch (ctrl->id) {
@@ -534,8 +534,8 @@ static void ar0234_set_framing_limits(struct ar0234 *ar0234, u32 width)
 
 	ar0234_update_exposure_limits(ar0234);
 
-	__v4l2_ctrl_modify_range(ar0234->hblank, AR0234_HBLANK_MIN,
-				 AR0234_HBLANK_MAX, 4, hblank);
+	__v4l2_ctrl_modify_range(ar0234->hblank, hblank, AR0234_HBLANK_MAX, 4,
+				 hblank);
 }
 
 static int ar0234_set_pad_format(struct v4l2_subdev *sd,
@@ -614,7 +614,7 @@ static int ar0234_set_selection(struct v4l2_subdev *sd,
 	struct ar0234 *ar0234 = to_ar0234(sd);
 	struct v4l2_rect *crop;
 	struct v4l2_rect rect;
-	u32 max_left, max_top;
+	int left, top, width, height, max_left, max_top;
 
 	if (sel->which == V4L2_SUBDEV_FORMAT_ACTIVE &&
 	    v4l2_subdev_is_streaming(sd))
@@ -623,40 +623,34 @@ static int ar0234_set_selection(struct v4l2_subdev *sd,
 	if (sel->target != V4L2_SEL_TGT_CROP)
 		return -EINVAL;
 
-	/* Align to sensor's cropping granularity */
-	rect.left = round_up(sel->r.left, AR0234_CROP_WIDTH_STEP);
-	rect.top = round_up(sel->r.top, AR0234_CROP_HEIGHT_STEP);
-	rect.width = round_down(sel->r.width, AR0234_CROP_WIDTH_STEP);
-	rect.height = round_down(sel->r.height, AR0234_CROP_HEIGHT_STEP);
+	/* Align and clamp using signed arithmetic */
+	left = round_up(sel->r.left, AR0234_CROP_WIDTH_STEP);
+	top = round_up(sel->r.top, AR0234_CROP_HEIGHT_STEP);
+	width = round_down(sel->r.width, AR0234_CROP_WIDTH_STEP);
+	height = round_down(sel->r.height, AR0234_CROP_HEIGHT_STEP);
 
-	/* First, clamp width/height to the array maximum */
-	rect.width = min(rect.width, AR0234_PIXEL_ARRAY_WIDTH);
-	rect.height = min(rect.height, AR0234_PIXEL_ARRAY_HEIGHT);
+	width = clamp_t(int, width, AR0234_MIN_CROP_WIDTH,
+			AR0234_PIXEL_ARRAY_WIDTH);
+	height = clamp_t(int, height, AR0234_MIN_CROP_HEIGHT,
+			 AR0234_PIXEL_ARRAY_HEIGHT);
 
-	/*
-	 * Adjust left/top so that the rectangle always stays inside the
-	 * active pixel array and leaves at least the minimum crop size.
-	 * Compute the maximum allowed left/top that still leaves room for
-	 * the (possibly already reduced) width/height, but no less than
-	 * the minimum crop size.
-	 */
-	max_left = AR0234_PIXEL_ARRAY_LEFT + AR0234_PIXEL_ARRAY_WIDTH -
-		   max(rect.width, AR0234_MIN_CROP_WIDTH);
-	max_top = AR0234_PIXEL_ARRAY_TOP + AR0234_PIXEL_ARRAY_HEIGHT -
-		  max(rect.height, AR0234_MIN_CROP_HEIGHT);
+	/* Compute maximum start positions that still fit the chosen size */
+	max_left = AR0234_PIXEL_ARRAY_LEFT + AR0234_PIXEL_ARRAY_WIDTH - width;
+	max_top = AR0234_PIXEL_ARRAY_TOP + AR0234_PIXEL_ARRAY_HEIGHT - height;
 
-	rect.left = clamp_t(u32, rect.left, AR0234_PIXEL_ARRAY_LEFT, max_left);
-	rect.top = clamp_t(u32, rect.top, AR0234_PIXEL_ARRAY_TOP, max_top);
+	left = clamp_t(int, left, AR0234_PIXEL_ARRAY_LEFT, max_left);
+	top = clamp_t(int, top, AR0234_PIXEL_ARRAY_TOP, max_top);
 
-	/*
-	 * Now recalculate width/height as the remaining space. This value
-	 * is guaranteed to be >= AR0234_MIN_CROP_WIDTH/HEIGHT because we
-	 * clamped left/top using the max() of the current size and the min.
-	 */
-	rect.width = min(rect.width, AR0234_PIXEL_ARRAY_LEFT +
-			 AR0234_PIXEL_ARRAY_WIDTH - rect.left);
-	rect.height = min(rect.height, AR0234_PIXEL_ARRAY_TOP +
-			  AR0234_PIXEL_ARRAY_HEIGHT - rect.top);
+	/* Trim width/height to available space */
+	width = min(width,
+		    AR0234_PIXEL_ARRAY_LEFT + AR0234_PIXEL_ARRAY_WIDTH - left);
+	height = min(height,
+		     AR0234_PIXEL_ARRAY_TOP + AR0234_PIXEL_ARRAY_HEIGHT - top);
+
+	rect.left = left;
+	rect.top = top;
+	rect.width = width;
+	rect.height = height;
 
 	crop = v4l2_subdev_state_get_crop(state, sel->pad);
 
@@ -821,8 +815,10 @@ static int ar0234_get_frame_desc(struct v4l2_subdev *sd, unsigned int pad,
 
 	state = v4l2_subdev_lock_and_get_active_state(&ar0234->sd);
 	fmt = v4l2_subdev_state_get_format(state, pad);
-	if (!fmt)
+	if (!fmt) {
+		v4l2_subdev_unlock_state(state);
 		return -EINVAL;
+	}
 
 	code = fmt->code;
 	v4l2_subdev_unlock_state(state);
@@ -958,11 +954,6 @@ static int ar0234_ctrls_init(struct ar0234 *ar0234)
 
 	ar0234->sd.ctrl_handler = &ar0234->ctrls;
 
-	mutex_lock(ar0234->ctrls.lock);
-	ar0234_set_link_limits(ar0234, &ar0234_modes[0]);
-	ar0234_set_framing_limits(ar0234, AR0234_PIXEL_ARRAY_WIDTH);
-	mutex_unlock(ar0234->ctrls.lock);
-
 	return 0;
 }
 
@@ -970,8 +961,7 @@ static int ar0234_parse_hw_config(struct ar0234 *ar0234)
 {
 	struct v4l2_fwnode_endpoint *ep_cfg = &ar0234->ep_cfg;
 	struct fwnode_handle *ep;
-	unsigned int i, j;
-	int ret;
+	int i, j, ret;
 
 	for (i = 0; i < ARRAY_SIZE(ar0234->supplies); i++)
 		ar0234->supplies[i].supply = ar0234_supply_names[i];
@@ -1195,8 +1185,11 @@ static int ar0234_probe(struct i2c_client *client)
 	if (ret)
 		goto error_pm;
 
+	ar0234_calculate_pll(ar0234, &ar0234_modes[0]);
+
 	ar0234->sd.internal_ops = &ar0234_internal_ops;
 	ar0234->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
+	ar0234->sd.flags |= V4L2_SUBDEV_FL_HAS_EVENTS;
 	ar0234->sd.entity.ops = &ar0234_subdev_entity_ops;
 	ar0234->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
 
@@ -1207,15 +1200,18 @@ static int ar0234_probe(struct i2c_client *client)
 		goto error_pm;
 	}
 
-	ret = v4l2_subdev_init_finalize(&ar0234->sd);
-	if (ret)
-		goto err_media;
-
 	ret = ar0234_ctrls_init(ar0234);
 	if (ret)
 		goto err_media;
 
 	ar0234->sd.state_lock = ar0234->ctrls.lock;
+
+	ret = v4l2_subdev_init_finalize(&ar0234->sd);
+	if (ret)
+		goto err_media;
+
+	ar0234_set_link_limits(ar0234, &ar0234_modes[0]);
+	ar0234_set_framing_limits(ar0234, AR0234_PIXEL_ARRAY_WIDTH);
 
 	ret = v4l2_async_register_subdev_sensor(&ar0234->sd);
 	if (ret) {
